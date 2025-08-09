@@ -52,37 +52,54 @@ OUTPUT:
 export function buildLengthMatchPrompt({
   topic,
   anchors, // [{ word:"KNOW", length:4 }, ...]
-  excludeWords, // words never to reuse: anchors + fixedPairs flatten
-  fixedPairs = [], // [["TRUVADA","DESCOVY"]]
+  excludeWords, // strings to avoid (anchors + fixedPairs + anything used)
+  fixedPairs = [], // [["DRUGA","DRUGB"], ...] for context only
   maxLettersPerToken = 12,
 }) {
   return {
     role: "user",
     content: `
-TASK: For EACH anchor, provide ONE medically valid word of the EXACT SAME LENGTH as its partner.
-Do NOT pair anchors with each other. Use new words only.
+You are producing STRICT JSON for length-matched partners.
 
-INPUT:
+TASK
+For EACH anchor, return EXACTLY ONE NEW word of the SAME LENGTH as the anchor word.
+Prefer medically relevant terms related to "${topic}".
+IF AND ONLY IF no medically relevant term of the exact length exists, return a neutral common English word of the same length as a fallback.
+
+
+CONTEXT
 topic: ${topic}
 anchors: ${JSON.stringify(anchors)}
 fixedPairs: ${JSON.stringify(fixedPairs)}
 excludeWords: ${JSON.stringify(excludeWords)}
 maxLettersPerToken: ${maxLettersPerToken}
 
-RULES:
-- EXACT same length per anchor. Uppercase. Allowed chars: A–Z, digits, underscore. No spaces/hyphens.
-- Do NOT output any word in excludeWords. Do NOT output stems/truncations (e.g., "DIAGNOS" for "STATUS" is invalid).
-- Suggestions should be medically relevant to the topic when possible.
-- OUTPUT STRICT JSON ONLY.
+HARD RULES (must satisfy all)
+- Length: suggestion.length === anchor.length (exact match).
+- Charset: UPPERCASE, characters allowed: A–Z, 0–9, underscore (_). No spaces, hyphens, punctuation.
+- New words only: do NOT output any string in excludeWords, and do NOT output the anchor itself.
+- Do NOT pair anchors with each other; suggestions must be words not present in anchors.
+- No stems/truncations/partial roots (e.g., "DIAGNO" is invalid for "STATUS").
+- Prefer medically relevant terms for the given topic when possible.
+- Output ONLY JSON as specified below. No commentary.
 
-OUTPUT:
+INVALID EXAMPLES (do NOT output)
+- Length mismatch: anchor "RETROVIRAL"(10) → "ANTIVIRAL"(9)
+- Truncation: anchor "STATUS"(6) → "DIAGNO"(6) is invalid because it’s a clipped stem
+- Illegal chars: "VIRAL-LOAD", "HIV TEST"
+
+VALID EXAMPLES
+- "KNOW"(4) → "TEST"(4)
+- "STATUS"(6) → "SCREEN"(6)
+
+OUTPUT JSON SCHEMA (strict)
 {
   "partners": [
-    { "original": "KNOW", "suggestion": "XXXX" },
-    { "original": "YOUR", "suggestion": "YYYY" },
-    ...
+    { "original": "<ANCHOR_WORD>", "suggestion": "<NEW_WORD_SAME_LENGTH>" }
+    // one object per anchor, preserve the order of 'anchors' input
   ]
-}`,
+}
+`,
   };
 }
 

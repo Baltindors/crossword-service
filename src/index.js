@@ -14,14 +14,11 @@ import {
   buildLengthMatchPrompt,
 } from "./ai/promptTemplates.js";
 
-// --- settings (move to constants.js later if you want) ---
-const GRID_MAX_LETTERS = 12; // per-token cap for 12x12
-const OK = /^[A-Z0-9_]+$/; // allow letters, digits (e.g., CD4COUNT), underscores
+const GRID_MAX_LETTERS = 12;
+const OK = /^[A-Z0-9_]+$/;
 
-// --- openai client ---
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-// --- helpers ---
 const up = (s) => String(s || "").toUpperCase();
 const upList = (arr) => (arr ?? []).map(up);
 
@@ -35,8 +32,8 @@ async function callJSON(system, user) {
   try {
     return JSON.parse(text);
   } catch {
-    console.error("❌ Model did not return valid JSON. Raw output:\n", text);
-    throw new Error("Invalid JSON from model");
+    console.error("❌ Invalid JSON from model:\n", text);
+    throw new Error("Invalid JSON");
   }
 }
 
@@ -65,73 +62,67 @@ async function main() {
   console.log("🚀 Anchor pairing pipeline starting…");
   await fs.mkdir("src/data", { recursive: true });
 
-  const { topic, difficulty, theme, topicWords } = puzzleConfig;
+  const {
+    topic,
+    difficulty,
+    theme,
+    topicWords,
+    fixedPairs: fixedPairsFromCfg, // <- optional, user-provided
+  } = puzzleConfig;
 
   // 1) Theme tokens (AI)
   console.log("🔹 Fetching theme tokens…");
   const hiddenTokens = await getHiddenTokens({ topic, phrase: theme.phrase });
   console.log("   → hiddenTokens:", hiddenTokens);
 
-  // 2) Build anchors: THEME FIRST, then topic words
-  const anchors = [
-    ...hiddenTokens.map((w) => ({ word: up(w), length: up(w).length })),
-    ...topicWords.map((w) => ({ word: up(w), length: up(w).length })),
-  ];
+  // 2) Build typed anchors
+  const anchors = buildAnchors(hiddenTokens, topicWords);
 
-  // 3) Seed fixed pairs you already know (TRUVADA–DESCOVY)
-  const FIX_A = "TRUVADA";
-  const FIX_B = "DESCOVY";
-  const fixedPairs = [];
-  const wordsUpper = new Set(anchors.map((a) => a.word));
-  if (wordsUpper.has(FIX_A) && wordsUpper.has(FIX_B)) {
-    fixedPairs.push([FIX_A, FIX_B]);
+  // 3) OPTIONAL: fixed pairs come from config only (no hardcoding)
+  const fixedPairs = (fixedPairsFromCfg ?? []).map(([a, b]) => [up(a), up(b)]);
+
+  // 4) Local pairing
+  const pairing = pairAnchorsWithConstraints(anchors, fixedPairs);
+  console.log(
+    `   → paired ${pairing.counts.paired} anchors, ${pairing.counts.unpaired} still need partners`
+  );
+
+  // 5) Ask AI only for missing partners
+  let partners = [];
+  if (pairing.anchorsNeedingPartners.length > 0) {
+    console.log(
+      `🔹 Requesting partners for ${pairing.anchorsNeedingPartners.length} anchors…`
+    );
+    const system = buildSystemPrompt();
+    const user = buildLengthMatchPrompt({
+      topic,
+      anchors: pairing.anchorsNeedingPartners,
+      excludeWords: pairing.excludeWords,
+      fixedPairs, // context only
+      maxLettersPerToken: GRID_MAX_LETTERS,
+    });
+    const { partners: aiPartners = [] } = await callJSON(system, user);
+    partners = aiPartners;
+    console.log("   → AI partners count:", partners.length);
   }
 
-  // 4) Exclude list = all anchors + all words in fixedPairs
-  const excludeSet = new Set([
-    ...anchors.map((a) => a.word),
-    ...fixedPairs.flat(),
-  ]);
-  const excludeWords = Array.from(excludeSet);
-
-  // 5) Which anchors still need partners? (skip any that are in a fixed pair)
-  const fixedFlat = new Set(fixedPairs.flat());
-  const anchorsNeedingPartners = anchors.filter((a) => !fixedFlat.has(a.word));
-
-  // 6) Ask AI for one partner per anchor (no anchor-with-anchor pairs)
-  console.log(
-    `🔹 Requesting partners for ${anchorsNeedingPartners.length} anchors…`
-  );
-  const system = buildSystemPrompt();
-  const user = buildLengthMatchPrompt({
-    topic,
-    anchors: anchorsNeedingPartners, // [{word,length}]
-    excludeWords,
-    fixedPairs,
-    maxLettersPerToken: GRID_MAX_LETTERS,
-  });
-
-  const { partners = [] } = await callJSON(system, user);
-  console.log("   → AI partners count:", partners.length);
-
-  // 7) Validate + merge
+  // 6) Validate + merge AI suggestions
+  const excludeSet = new Set(pairing.excludeWords);
   const partnersMap = new Map();
   for (const p of partners) {
     const orig = up(p.original);
     const sugg = up(p.suggestion);
     if (validateSuggestion(orig, sugg, excludeSet)) {
       partnersMap.set(orig, sugg);
-      excludeSet.add(sugg); // avoid duplicates across suggestions
+      excludeSet.add(sugg);
     }
   }
 
-  // final pairs: fixed first, then (anchor, partner)
-  const pairsFinal = [...fixedPairs];
-  for (const a of anchorsNeedingPartners) {
+  const pairsFinal = [...pairing.pairs];
+  for (const a of pairing.anchorsNeedingPartners) {
     const partner = partnersMap.get(a.word);
     if (partner) pairsFinal.push([a.word, partner]);
   }
-
   const finalWordList = Array.from(new Set(pairsFinal.flat()));
 
   const foundation = {
@@ -144,18 +135,17 @@ async function main() {
     theme: {
       phrase: theme.phrase,
       instructions: theme.instructions,
-      hiddenTokens, // theme words (AI), used as anchors first
+      hiddenTokens,
     },
     topic: { words: upList(topicWords) },
     pairing: {
-      mode: "anchor",
-      anchors, // theme-first order
-      fixedPairs, // seeded known pairs
-      aiPartners: partners, // raw AI output for traceability
-      final: {
-        pairsFinal, // e.g., ["KNOW","XXXX"], ["YOUR","YYYY"], …, ["TRUVADA","DESCOVY"]
-        finalWordList, // flattened unique list
-      },
+      mode: "anchor+local",
+      counts: pairing.counts,
+      anchors,
+      fixedPairs, // <- only from config if present
+      local: pairing,
+      aiPartners: partners,
+      final: { pairsFinal, finalWordList },
     },
   };
 

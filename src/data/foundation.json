@@ -3,20 +3,20 @@
     "topic": "HIV Prevention",
     "difficulty": 5,
     "gridMaxLetters": 12,
-    "createdAt": "2025-08-09T20:42:21.028Z"
+    "createdAt": "2025-08-09T22:00:21.956Z"
   },
   "theme": {
-    "phrase": "KNOW YOURS STATUS",
+    "phrase": "KNOW YOUR STATUS",
     "instructions": "Weave the hidden motif 'KNOW YOUR STATUS' into three spans each span should appear as part of a longer entry",
     "hiddenTokens": [
       "KNOW",
-      "YOURS",
+      "YOUR",
       "STATUS"
     ]
   },
   "topic": {
     "words": [
-      "RETROVIRAL",
+      "ANTIBODIES",
       "PROPHYLAXIS",
       "VIRALLOAD",
       "ELISA",
@@ -26,71 +26,150 @@
     ]
   },
   "pairing": {
-    "mode": "anchor",
+    "mode": "anchor+local",
+    "counts": {
+      "anchors": 10,
+      "paired": 2,
+      "unpaired": 8
+    },
     "anchors": [
       {
         "word": "KNOW",
-        "length": 4
+        "length": 4,
+        "type": "theme"
       },
       {
-        "word": "YOURS",
-        "length": 5
+        "word": "YOUR",
+        "length": 4,
+        "type": "theme"
       },
       {
         "word": "STATUS",
-        "length": 6
+        "length": 6,
+        "type": "theme"
       },
       {
-        "word": "RETROVIRAL",
-        "length": 10
+        "word": "ANTIBODIES",
+        "length": 10,
+        "type": "topic"
       },
       {
         "word": "PROPHYLAXIS",
-        "length": 11
+        "length": 11,
+        "type": "topic"
       },
       {
         "word": "VIRALLOAD",
-        "length": 9
+        "length": 9,
+        "type": "topic"
       },
       {
         "word": "ELISA",
-        "length": 5
+        "length": 5,
+        "type": "topic"
       },
       {
         "word": "CD4COUNT",
-        "length": 8
+        "length": 8,
+        "type": "topic"
       },
       {
         "word": "TRUVADA",
-        "length": 7
+        "length": 7,
+        "type": "topic"
       },
       {
         "word": "DESCOVY",
-        "length": 7
+        "length": 7,
+        "type": "topic"
       }
     ],
-    "fixedPairs": [
-      [
+    "fixedPairs": [],
+    "local": {
+      "pairs": [
+        [
+          "TRUVADA",
+          "DESCOVY"
+        ]
+      ],
+      "unpaired": [
+        "KNOW",
+        "YOUR",
+        "STATUS",
+        "ANTIBODIES",
+        "PROPHYLAXIS",
+        "VIRALLOAD",
+        "ELISA",
+        "CD4COUNT"
+      ],
+      "excludeWords": [
+        "KNOW",
+        "YOUR",
+        "STATUS",
+        "ANTIBODIES",
+        "PROPHYLAXIS",
+        "VIRALLOAD",
+        "ELISA",
+        "CD4COUNT",
         "TRUVADA",
         "DESCOVY"
-      ]
-    ],
+      ],
+      "anchorsNeedingPartners": [
+        {
+          "word": "KNOW",
+          "length": 4
+        },
+        {
+          "word": "YOUR",
+          "length": 4
+        },
+        {
+          "word": "STATUS",
+          "length": 6
+        },
+        {
+          "word": "ANTIBODIES",
+          "length": 10
+        },
+        {
+          "word": "PROPHYLAXIS",
+          "length": 11
+        },
+        {
+          "word": "VIRALLOAD",
+          "length": 9
+        },
+        {
+          "word": "ELISA",
+          "length": 5
+        },
+        {
+          "word": "CD4COUNT",
+          "length": 8
+        }
+      ],
+      "counts": {
+        "anchors": 10,
+        "paired": 2,
+        "unpaired": 8
+      }
+    },
     "aiPartners": [
       {
         "original": "KNOW",
         "suggestion": "TEST"
       },
       {
-        "original": "YOURS",
-        "suggestion": "RISKY"
+        "original": "YOUR",
+        "suggestion": "RISK"
       },
       {
         "original": "STATUS",
         "suggestion": "RESULT"
       },
       {
-        "original": "RETROVIRAL",
-        "suggestion": "ANTIRETRO"
+        "original": "ANTIBODIES",
+        "suggestion": "IMMUNOGLOBULINS"
       },
       {
         "original": "PROPHYLAXIS",
@@ -98,15 +177,15 @@
       },
       {
         "original": "VIRALLOAD",
-        "suggestion": "LOADTEST"
+        "suggestion": "LOADS"
       },
       {
         "original": "ELISA",
-        "suggestion": "SWAB"
+        "suggestion": "TESTS"
       },
       {
         "original": "CD4COUNT",
-        "suggestion": "TCOUNTED"
+        "suggestion": "CELLCOUNT"
       }
     ],
     "final": {
@@ -120,16 +199,16 @@
           "TEST"
         ],
         [
-          "YOURS",
-          "RISKY"
+          "YOUR",
+          "RISK"
         ],
         [
           "STATUS",
           "RESULT"
         ],
         [
-          "CD4COUNT",
-          "TCOUNTED"
+          "ELISA",
+          "TESTS"
         ]
       ],
       "finalWordList": [
@@ -137,12 +216,12 @@
         "DESCOVY",
         "KNOW",
         "TEST",
-        "YOURS",
-        "RISKY",
+        "YOUR",
+        "RISK",
         "STATUS",
         "RESULT",
-        "CD4COUNT",
-        "TCOUNTED"
+        "ELISA",
+        "TESTS"
       ]
     }
   }
