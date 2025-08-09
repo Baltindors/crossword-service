@@ -1,0 +1,21 @@
+Sample logic with minimum AI
+
+get the topic, get the words, order in pairs of same length,
+how many are there missing a pair.
+send to AI to pair them with a word preferbly with topic that is the same length
+return the pair and add in the array.
+get the theme ask AI how they should be broken down for a 12 by 12 grid have it return it in order
+and paired with word of equal lenght prioratizing each other.
+
+pair each point with its symetric counterpart
+add each word from topic and theme in the grid with all their length validations theme always accross
+topic can be accross or down. 
+for each entry enter the corresponding symetrical pair, if its not possible retry until it fits.
+everytime you enter a word remove all of the pairs that are being occupied for the array of empty pairs
+place the black spaces in the remaining available pairs based on the difficulty, with some rules about 
+at the end of words and not leaving only spaces for 2 letter words. prioratize diagonal placement in the middle
+after this is done, send the grid to LLM to fill in with filler words, prioratizing medical words for the topic
+after that return the grid, llm needs to validate that they are all valide words accross and vertical.
+
+
+
