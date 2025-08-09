@@ -6,8 +6,14 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node src/index.js",
-    "dev": "nodemon src/index.js"
+    "prepare": "node src/index.js",
+    "start": "node src/server.js",
+    "dev": "nodemon src/index.js",
+    "test:hidden": "node src/testOpenAI.js hidden",
+    "test:length": "node src/testOpenAI.js length",
+    "test:filler": "node src/testOpenAI.js filler",
+    "test:validate": "node src/testOpenAI.js validate",
+    "test:clues": "node src/testOpenAI.js clues"
   },
   "keywords": [],
   "author": "",

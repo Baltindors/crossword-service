@@ -12,36 +12,34 @@ Hard rules:
 - OUTPUT STRICT JSON ONLY (no prose, no markdown).`;
 }
 
-// -------- 1) Understand topic + derive hidden words -----------
-/**
- * Ask the model to parse the theme phrase into <= maxHiddenWords tokens,
- * preserving order, suitable to hide inside longer entries.
- */
+// 1) Hidden words / tokens from theme phrase (length-capped per token)
 export function buildHiddenWordsPrompt({
   topic,
   themePhrase,
-  maxHiddenWords = 12,
+  maxLettersPerToken = 12, // per-token max length (e.g., grid width/height)
 }) {
   return {
     role: "user",
     content: `
-TASK: Parse the theme for hidden tokens while understanding the puzzle topic.
+TASK: Split the theme phrase into hidden tokens suitable for embedding into crossword entries.
 
 INPUT:
 topic: ${topic}
 themePhrase: ${themePhrase}
-maxHiddenWords: ${maxHiddenWords}
+maxLettersPerToken: ${maxLettersPerToken}
 
 REQUIREMENTS:
-- Return hidden tokens IN ORDER they appear in the phrase.
-- Do not exceed maxHiddenWords.
-- Tokens should be contiguous letter runs (ignore punctuation); prefer medically meaningful splits if natural, otherwise default to word boundaries.
+- Preserve order: tokens must appear in the SAME SEQUENCE as in the original phrase.
+- Each token must be a CONTIGUOUS run of letters from the phrase (ignore spaces/punctuation).
+- Do NOT return any token longer than maxLettersPerToken.
+- If any single word in the phrase exceeds maxLettersPerToken, split it into smaller contiguous segments.
+- Prefer splits that produce medically meaningful substrings when natural; otherwise split along word boundaries.
 - Uppercase all tokens.
+- OUTPUT STRICT JSON ONLY (no prose, no markdown).
 
-OUTPUT (JSON ONLY):
+OUTPUT:
 {
-  "topicSummary": "1-2 sentence medical framing of the topic",
-  "hiddenWordsOrdered": ["TOKEN1","TOKEN2", "..."]  // length <= ${maxHiddenWords}
+  "hiddenWordsOrdered": ["TOKEN1","TOKEN2","..."]  // every token.length <= maxLettersPerToken
 }`,
   };
 }
@@ -51,25 +49,41 @@ OUTPUT (JSON ONLY):
  * For any topic words you can't locally pair by length, ask for same-length, on-topic
  * suggestions to pair with. You pass only the unpaired list.
  */
-export function buildLengthMatchPrompt({ topic, unpairedWords }) {
+export function buildLengthMatchPrompt({
+  topic,
+  unpairedWords, // e.g., ["RETROVIRAL"]
+  excludeWords, // e.g., all topic words + hidden tokens; UPPERCASE
+  needAdditionalPairs = 0, // e.g., 1 means create 1 new pair (2 new words)
+  maxLettersPerToken = 12, // do not exceed grid dimension
+}) {
   return {
     role: "user",
     content: `
-TASK: For each UNPAIRED topic word, propose ONE medically valid word of the SAME LENGTH to enable pairing.
+TASK: Provide same-length partners for the UNPAIRED topic words, and (if requested)
+generate additional NEW pairs to reach the target inventory.
 
 INPUT:
 topic: ${topic}
-unpairedWords: [${unpairedWords.map((w) => `"${w}"`).join(", ")}]
+unpairedWords: ${JSON.stringify(unpairedWords)}
+excludeWords: ${JSON.stringify(excludeWords)}   // do NOT repeat any of these
+needAdditionalPairs: ${needAdditionalPairs}
+maxLettersPerToken: ${maxLettersPerToken}
 
 RULES:
-- EXACT SAME LENGTH per item.
-- Strong topical relevance preferred; avoid trademarks unless widely standard in clinical usage.
-- Uppercase; no spaces (use underscores ONLY if medically standard, e.g., "CD4_COUNT").
+- For each item in unpairedWords, suggest ONE medically valid word of the EXACT SAME LENGTH.
+- Strong topical relevance preferred; use US English; uppercase; no spaces (underscores ONLY if medically standard, e.g., "CD4_COUNT").
+- Do NOT output any suggestion that appears in excludeWords.
+- If needAdditionalPairs > 0: generate that many NEW PAIRS. Each pair consists of TWO distinct words of equal length (length ≤ maxLettersPerToken), medically relevant, and not in excludeWords.
+- Avoid trademarks unless widely standard in clinical usage.
+- OUTPUT STRICT JSON ONLY (no prose, no markdown).
 
-OUTPUT (JSON ONLY):
+OUTPUT:
 {
   "matches": [
     { "original":"RETROVIRAL", "suggestion":"ANTIVIRALS", "length":10, "rationale":"..." }
+  ],
+  "newPairs": [
+    { "word1":"SEROLOGIES", "word2":"IMMUNOLOGY", "length":10, "rationale":"..." }
   ]
 }`,
   };
