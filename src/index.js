@@ -5,7 +5,6 @@ import dotenv from "dotenv";
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// middleware to parse JSON bodies
 app.use(express.json());
 
 app.get("/", (req, res) => {

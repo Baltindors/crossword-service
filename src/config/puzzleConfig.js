@@ -10,13 +10,8 @@ export const puzzleConfig = {
   // the theme of the puzzle, used to generate the puzzle and hidden words
   theme: {
     phrase: "KNOW YOUR STATUS",
-    instructions: [
-      "Weave the hidden motif 'KNOW YOUR STATUS' into three spans",
-      "KNOW",
-      "YOUR",
-      "STATUS",
-      "Each span should appear as part of a longer entry and be placed with 180° rotational symmetry.",
-    ].join(" "),
+    instructions:
+      "Weave the hidden motif 'KNOW YOUR STATUS' into three spans each span should appear as part of a longer entry",
   },
 
   //words that must be included in the puzzle
