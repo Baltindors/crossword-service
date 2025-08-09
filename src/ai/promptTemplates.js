@@ -49,51 +49,34 @@ OUTPUT:
  * For any topic words you can't locally pair by length, ask for same-length, on-topic
  * suggestions to pair with. You pass only the unpaired list.
  */
-export function buildLengthMatchPrompt({
+export function buildSelectionPrompt({
   topic,
-  anchors, // [{ word:"KNOW", length:4 }, ...]
-  excludeWords, // strings to avoid (anchors + fixedPairs + anything used)
+  anchor, // { word:"KNOW", length:4 }
+  candidates, // array of exact-length candidates from dictionary
+  excludeWords, // strings to avoid
 }) {
   return {
     role: "user",
     content: `
-You are producing STRICT JSON for length-matched partners.
+Select the most appropriate medically relevant word from the provided list for the anchor "${
+      anchor.word
+    }".
 
-TASK
-For EACH anchor, return EXACTLY ONE NEW word of the SAME LENGTH as the anchor word.
-Prefer medically relevant word related to "${topic}".
-IF AND ONLY IF no medically relevant term/word of the exact length exists, return a neutral common English word of the same length as a fallback.
+TOPIC: ${topic}
+ANCHOR LENGTH: ${anchor.length}
+EXCLUDE WORDS: ${JSON.stringify(excludeWords)}
+CANDIDATES: ${JSON.stringify(candidates)}
 
+RULES:
+- Choose exactly one word from the candidates list.
+- Do NOT modify or invent new words.
+- Must not choose anything from EXCLUDE WORDS.
+- Preserve case as uppercase in your suggestion.
+- Output strict JSON only.
 
-CONTEXT
-topic: ${topic}
-anchors: ${JSON.stringify(anchors)}
-excludeWords: ${JSON.stringify(excludeWords)}
-
-HARD RULES (must satisfy all)
-- Length: suggestion.length === anchor.length (exact match).
-- Charset: UPPERCASE, characters allowed: A–Z, 0–9, underscore (_). No spaces, hyphens, punctuation.
-- New words only: do NOT output any string in excludeWords, and do NOT output the anchor itself.
-- Do NOT pair anchors with each other; suggestions must be words not present in anchors.
-- No stems/truncations/partial roots.
-- Output ONLY JSON as specified below. No commentary.
-
-INVALID EXAMPLES (do NOT output)
-- Length mismatch: anchor "RETROVIRAL"(10) → "ANTIVIRAL"(9)
-- Truncation: anchor "STATUS"(6) → "DIAGNO"(6) is invalid because it’s a clipped stem
-
-VALID EXAMPLES
-- "KNOW"(4) → "TEST"(4)
-- "STATUS"(6) → "SCREEN"(6)
-
-OUTPUT JSON SCHEMA (strict)
-{
-  "partners": [
-    { "original": "<ANCHOR_WORD>", "suggestion": "<NEW_WORD_SAME_LENGTH>" }
-    // one object per anchor, preserve the order of 'anchors' input
-  ]
-}
-`,
+OUTPUT FORMAT:
+{ "original": "${anchor.word}", "suggestion": "<CHOSEN_WORD>" }
+    `.trim(),
   };
 }
 

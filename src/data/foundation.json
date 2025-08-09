@@ -3,7 +3,7 @@
     "topic": "HIV Prevention",
     "difficulty": 5,
     "gridMaxLetters": 12,
-    "createdAt": "2025-08-09T22:38:38.690Z"
+    "createdAt": "2025-08-09T22:49:19.951Z"
   },
   "theme": {
     "phrase": "KNOW YOUR STATUS",
@@ -173,7 +173,7 @@
       },
       {
         "original": "PROPHYLAXIS",
-        "suggestion": "INTERVENTION"
+        "suggestion": "POSTEXPOSURE"
       },
       {
         "original": "VIRALLOAD",
@@ -185,7 +185,7 @@
       },
       {
         "original": "CD4COUNT",
-        "suggestion": "TREATING"
+        "suggestion": "MONITOR"
       }
     ],
     "final": {
@@ -213,10 +213,6 @@
         [
           "ELISA",
           "RAPID"
-        ],
-        [
-          "CD4COUNT",
-          "TREATING"
         ]
       ],
       "finalWordList": [
@@ -231,9 +227,7 @@
         "ANTIBODIES",
         "PREVENTION",
         "ELISA",
-        "RAPID",
-        "CD4COUNT",
-        "TREATING"
+        "RAPID"
       ]
     }
   }

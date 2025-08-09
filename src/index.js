@@ -2,8 +2,8 @@
 import "dotenv/config";
 import fs from "fs/promises";
 import OpenAI from "openai";
-
 import { puzzleConfig } from "./config/puzzleConfig.js";
+import { getMedicalWordsSameLength } from "./utils/dictionary.js";
 import {
   buildAnchors,
   pairAnchorsWithConstraints,
@@ -97,22 +97,51 @@ async function main() {
     `   → paired ${pairing.counts.paired} anchors, ${pairing.counts.unpaired} still need partners`
   );
 
-  // 5) Ask AI only for missing partners
+  // 5) Ask AI only for missing partners (dictionary-first approach)
   let partners = [];
   if (pairing.anchorsNeedingPartners.length > 0) {
     console.log(
       `🔹 Requesting partners for ${pairing.anchorsNeedingPartners.length} anchors…`
     );
-    const system = buildSystemPrompt();
-    const user = buildLengthMatchPrompt({
-      topic,
-      anchors: pairing.anchorsNeedingPartners,
-      excludeWords: pairing.excludeWords,
-      fixedPairs, // context only
-      maxLettersPerToken: GRID_MAX_LETTERS,
-    });
-    const { partners: aiPartners = [] } = await callJSON(system, user);
-    partners = aiPartners;
+
+    for (const anchor of pairing.anchorsNeedingPartners) {
+      // Step 5.1 – Fetch medical candidates of same length
+      const candidates = await getMedicalWordsSameLength(anchor.word, topic);
+
+      if (candidates.length > 0) {
+        // Step 5.2 – Ask AI to choose from vetted list
+        const system = buildSystemPrompt();
+        const user = buildSelectionPrompt(anchor.word, candidates);
+        try {
+          const { original, suggestion } = await callJSON(system, user);
+          partners.push({ original: up(original), suggestion: up(suggestion) });
+        } catch (err) {
+          console.error(`❌ Failed selection for ${anchor.word}`, err);
+        }
+      } else {
+        // Step 5.3 – Fall back to generative prompt if no candidates found
+        const system = buildSystemPrompt();
+        const user = buildLengthMatchPrompt({
+          topic,
+          anchors: [anchor], // just this anchor
+          excludeWords: pairing.excludeWords,
+          fixedPairs,
+          maxLettersPerToken: GRID_MAX_LETTERS,
+        });
+        try {
+          const { partners: aiPartners = [] } = await callJSON(system, user);
+          partners.push(
+            ...aiPartners.map((p) => ({
+              original: up(p.original),
+              suggestion: up(p.suggestion),
+            }))
+          );
+        } catch (err) {
+          console.error(`❌ Failed generation for ${anchor.word}`, err);
+        }
+      }
+    }
+
     console.log("   → AI partners count:", partners.length);
   }
 
@@ -135,6 +164,7 @@ async function main() {
   }
   const finalWordList = Array.from(new Set(pairsFinal.flat()));
 
+  // 7) Build foundation object
   const foundation = {
     meta: {
       topic,
@@ -152,13 +182,14 @@ async function main() {
       mode: "anchor+local",
       counts: pairing.counts,
       anchors,
-      fixedPairs, // <- only from config if present
+      fixedPairs,
       local: pairing,
       aiPartners: partners,
       final: { pairsFinal, finalWordList },
     },
   };
 
+  // 8) Save to file
   console.log("📄 Final JSON:\n", JSON.stringify(foundation, null, 2));
   await fs.writeFile(
     "src/data/foundation.json",
