@@ -1,23 +1,29 @@
 // src/index.js
-import dotenv from "dotenv";
-dotenv.config();
-
+import "dotenv/config";
 import fs from "fs/promises";
 import OpenAI from "openai";
 
 import { puzzleConfig } from "./config/puzzleConfig.js";
-import { analyzeTopicWords } from "./utils/topicPairing.js";
+import {
+  buildAnchors,
+  pairAnchorsWithConstraints,
+} from "./utils/topicPairing.js";
 import {
   buildSystemPrompt,
   buildHiddenWordsPrompt,
   buildLengthMatchPrompt,
 } from "./ai/promptTemplates.js";
 
-// Single-source settings (should move to ./config/constants.js)
-const GRID_MAX_LETTERS = 12; // per-token cap for grid (fits 12x12)
-const TARGET_TOTAL_WORDS = 10; // target inventory before filler (5 pairs)
+// --- settings (move to constants.js later if you want) ---
+const GRID_MAX_LETTERS = 12; // per-token cap for 12x12
+const OK = /^[A-Z0-9_]+$/; // allow letters, digits (e.g., CD4COUNT), underscores
 
+// --- openai client ---
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+// --- helpers ---
+const up = (s) => String(s || "").toUpperCase();
+const upList = (arr) => (arr ?? []).map(up);
 
 async function callJSON(system, user) {
   const res = await client.chat.completions.create({
@@ -29,13 +35,10 @@ async function callJSON(system, user) {
   try {
     return JSON.parse(text);
   } catch {
-    console.error("Model did not return valid JSON:\n", text);
+    console.error("❌ Model did not return valid JSON. Raw output:\n", text);
     throw new Error("Invalid JSON from model");
   }
 }
-
-const up = (s) => String(s || "").toUpperCase();
-const upList = (arr) => (arr ?? []).map(up);
 
 async function getHiddenTokens({ topic, phrase }) {
   const system = buildSystemPrompt();
@@ -49,170 +52,123 @@ async function getHiddenTokens({ topic, phrase }) {
   return upList(json.hiddenWordsOrdered);
 }
 
-function pairInitialInventory({ topicWords, hiddenTokens }) {
-  // Theme words must be at the top; they’ll be prioritized later for placement too.
-  const inputOrder = [...upList(hiddenTokens), ...upList(topicWords)];
-  const pairing = analyzeTopicWords(inputOrder, TARGET_TOTAL_WORDS);
-
-  return {
-    inputOrder, // theme first, then topic words
-    pairsInitial: pairing.pairs,
-    unpairedInitial: pairing.unpaired,
-    countsInitial: pairing.counts,
-    errorsInitial: pairing.errors,
-  };
-}
-
-async function getLengthMatches({
-  topic,
-  unpairedWords,
-  excludeWords,
-  remainingToTarget,
-}) {
-  // After AI pairs all anchors (unpairedWords), how many are we still short of target?
-  const remainingAfterPairing = Math.max(
-    0,
-    remainingToTarget - unpairedWords.length
-  );
-  // Each new pair adds 2 words
-  const needAdditionalPairs = Math.ceil(remainingAfterPairing / 2);
-
-  const system = buildSystemPrompt();
-  const user = buildLengthMatchPrompt({
-    topic,
-    unpairedWords,
-    excludeWords,
-    needAdditionalPairs,
-    maxLettersPerToken: GRID_MAX_LETTERS,
-  });
-
-  const json = await callJSON(system, user);
-  return {
-    matches: json.matches ?? [],
-    newPairs: json.newPairs ?? [],
-    needAdditionalPairs,
-  };
-}
-
-function mergePairs({ pairsInitial, unpairedInitial, lengthMatchResult }) {
-  const pairs = [...pairsInitial];
-
-  // Map originals -> suggestions for anchors
-  const matchMap = new Map();
-  for (const m of lengthMatchResult.matches) {
-    const orig = up(m.original);
-    const sugg = up(m.suggestion);
-    if (orig && sugg) matchMap.set(orig, sugg);
-  }
-
-  // Add one partner per unpaired anchor (if provided)
-  for (const anchor of unpairedInitial) {
-    const partner = matchMap.get(up(anchor));
-    if (partner) pairs.push([up(anchor), partner]);
-  }
-
-  // Add brand-new pairs
-  for (const p of lengthMatchResult.newPairs) {
-    const w1 = up(p.word1);
-    const w2 = up(p.word2);
-    if (w1 && w2) pairs.push([w1, w2]);
-  }
-
-  // Final flat list (unique)
-  const finalWords = new Set();
-  for (const [a, b] of pairs) {
-    if (a) finalWords.add(a);
-    if (b) finalWords.add(b);
-  }
-
-  return { pairsFinal: pairs, finalWordList: Array.from(finalWords) };
+function validateSuggestion(orig, sugg, excludeSet) {
+  if (!orig || !sugg) return false;
+  if (!OK.test(sugg)) return false;
+  if (sugg.length !== orig.length) return false;
+  if (excludeSet.has(sugg)) return false;
+  if (sugg === orig) return false;
+  return true;
 }
 
 async function main() {
-  const { topic, difficulty, theme, topicWords } = puzzleConfig;
-
+  console.log("🚀 Anchor pairing pipeline starting…");
   await fs.mkdir("src/data", { recursive: true });
 
-  // 1) Theme words from AI
+  const { topic, difficulty, theme, topicWords } = puzzleConfig;
+
+  // 1) Theme tokens (AI)
+  console.log("🔹 Fetching theme tokens…");
   const hiddenTokens = await getHiddenTokens({ topic, phrase: theme.phrase });
-  await fs.writeFile(
-    "src/data/hiddenTokens.json",
-    JSON.stringify({ hiddenTokens }, null, 2)
-  );
+  console.log("   → hiddenTokens:", hiddenTokens);
 
-  // 2) Local pairing on theme-first + topic words
-  const prepared = pairInitialInventory({ topicWords, hiddenTokens });
-  await fs.writeFile(
-    "src/data/localPairing.json",
-    JSON.stringify(prepared, null, 2)
-  );
+  // 2) Build anchors: THEME FIRST, then topic words
+  const anchors = [
+    ...hiddenTokens.map((w) => ({ word: up(w), length: up(w).length })),
+    ...topicWords.map((w) => ({ word: up(w), length: up(w).length })),
+  ];
 
-  // 3) Build excludes (everything we already have), then ask AI for matches
-  const excludeWords = Array.from(new Set(prepared.inputOrder)); // theme + topic
-  const lengthMatch = await getLengthMatches({
+  // 3) Seed fixed pairs you already know (TRUVADA–DESCOVY)
+  const FIX_A = "TRUVADA";
+  const FIX_B = "DESCOVY";
+  const fixedPairs = [];
+  const wordsUpper = new Set(anchors.map((a) => a.word));
+  if (wordsUpper.has(FIX_A) && wordsUpper.has(FIX_B)) {
+    fixedPairs.push([FIX_A, FIX_B]);
+  }
+
+  // 4) Exclude list = all anchors + all words in fixedPairs
+  const excludeSet = new Set([
+    ...anchors.map((a) => a.word),
+    ...fixedPairs.flat(),
+  ]);
+  const excludeWords = Array.from(excludeSet);
+
+  // 5) Which anchors still need partners? (skip any that are in a fixed pair)
+  const fixedFlat = new Set(fixedPairs.flat());
+  const anchorsNeedingPartners = anchors.filter((a) => !fixedFlat.has(a.word));
+
+  // 6) Ask AI for one partner per anchor (no anchor-with-anchor pairs)
+  console.log(
+    `🔹 Requesting partners for ${anchorsNeedingPartners.length} anchors…`
+  );
+  const system = buildSystemPrompt();
+  const user = buildLengthMatchPrompt({
     topic,
-    unpairedWords: prepared.unpairedInitial,
+    anchors: anchorsNeedingPartners, // [{word,length}]
     excludeWords,
-    remainingToTarget: prepared.countsInitial.missingToTarget,
+    fixedPairs,
+    maxLettersPerToken: GRID_MAX_LETTERS,
   });
-  await fs.writeFile(
-    "src/data/lengthMatch.response.json",
-    JSON.stringify(lengthMatch, null, 2)
-  );
 
-  // 4) Merge into final pairs and word list
-  const merged = mergePairs({
-    pairsInitial: prepared.pairsInitial,
-    unpairedInitial: prepared.unpairedInitial,
-    lengthMatchResult: lengthMatch,
-  });
+  const { partners = [] } = await callJSON(system, user);
+  console.log("   → AI partners count:", partners.length);
+
+  // 7) Validate + merge
+  const partnersMap = new Map();
+  for (const p of partners) {
+    const orig = up(p.original);
+    const sugg = up(p.suggestion);
+    if (validateSuggestion(orig, sugg, excludeSet)) {
+      partnersMap.set(orig, sugg);
+      excludeSet.add(sugg); // avoid duplicates across suggestions
+    }
+  }
+
+  // final pairs: fixed first, then (anchor, partner)
+  const pairsFinal = [...fixedPairs];
+  for (const a of anchorsNeedingPartners) {
+    const partner = partnersMap.get(a.word);
+    if (partner) pairsFinal.push([a.word, partner]);
+  }
+
+  const finalWordList = Array.from(new Set(pairsFinal.flat()));
 
   const foundation = {
     meta: {
       topic,
       difficulty,
       gridMaxLetters: GRID_MAX_LETTERS,
-      targetTotalWords: TARGET_TOTAL_WORDS,
       createdAt: new Date().toISOString(),
     },
     theme: {
       phrase: theme.phrase,
       instructions: theme.instructions,
-      hiddenTokens, // <- AI theme words, preserved
+      hiddenTokens, // theme words (AI), used as anchors first
     },
-    topic: {
-      words: upList(topicWords),
-    },
+    topic: { words: upList(topicWords) },
     pairing: {
-      inputOrder: prepared.inputOrder, // theme first
-      local: {
-        pairs: prepared.pairsInitial,
-        unpaired: prepared.unpairedInitial,
-        counts: prepared.countsInitial,
-        errors: prepared.errorsInitial,
+      mode: "anchor",
+      anchors, // theme-first order
+      fixedPairs, // seeded known pairs
+      aiPartners: partners, // raw AI output for traceability
+      final: {
+        pairsFinal, // e.g., ["KNOW","XXXX"], ["YOUR","YYYY"], …, ["TRUVADA","DESCOVY"]
+        finalWordList, // flattened unique list
       },
-      ai: lengthMatch, // raw AI output for traceability
-      final: merged, // merged pairs + final word list
     },
   };
 
-  // This file is CREATED at runtime (no need to pre-create it)
+  console.log("📄 Final JSON:\n", JSON.stringify(foundation, null, 2));
   await fs.writeFile(
     "src/data/foundation.json",
     JSON.stringify(foundation, null, 2)
   );
-  console.log("Wrote src/data/foundation.json");
-  // Log the foundation object to the console for inspection
-  console.log(
-    "foundation.json content:\n",
-    JSON.stringify(foundation, null, 2)
-  );
+  console.log("💾 Wrote src/data/foundation.json");
+  console.log("🏁 Done.");
 }
 
-// allow `node src/index.js`
-if (import.meta.url === `file://${process.argv[1]}`) {
-  main().catch((err) => {
-    console.error(err);
-    process.exit(1);
-  });
-}
+main().catch((err) => {
+  console.error("🔥 Pipeline failed:", err);
+  process.exit(1);
+});

@@ -1,0 +1,149 @@
+{
+  "meta": {
+    "topic": "HIV Prevention",
+    "difficulty": 5,
+    "gridMaxLetters": 12,
+    "createdAt": "2025-08-09T20:42:21.028Z"
+  },
+  "theme": {
+    "phrase": "KNOW YOURS STATUS",
+    "instructions": "Weave the hidden motif 'KNOW YOUR STATUS' into three spans each span should appear as part of a longer entry",
+    "hiddenTokens": [
+      "KNOW",
+      "YOURS",
+      "STATUS"
+    ]
+  },
+  "topic": {
+    "words": [
+      "RETROVIRAL",
+      "PROPHYLAXIS",
+      "VIRALLOAD",
+      "ELISA",
+      "CD4COUNT",
+      "TRUVADA",
+      "DESCOVY"
+    ]
+  },
+  "pairing": {
+    "mode": "anchor",
+    "anchors": [
+      {
+        "word": "KNOW",
+        "length": 4
+      },
+      {
+        "word": "YOURS",
+        "length": 5
+      },
+      {
+        "word": "STATUS",
+        "length": 6
+      },
+      {
+        "word": "RETROVIRAL",
+        "length": 10
+      },
+      {
+        "word": "PROPHYLAXIS",
+        "length": 11
+      },
+      {
+        "word": "VIRALLOAD",
+        "length": 9
+      },
+      {
+        "word": "ELISA",
+        "length": 5
+      },
+      {
+        "word": "CD4COUNT",
+        "length": 8
+      },
+      {
+        "word": "TRUVADA",
+        "length": 7
+      },
+      {
+        "word": "DESCOVY",
+        "length": 7
+      }
+    ],
+    "fixedPairs": [
+      [
+        "TRUVADA",
+        "DESCOVY"
+      ]
+    ],
+    "aiPartners": [
+      {
+        "original": "KNOW",
+        "suggestion": "TEST"
+      },
+      {
+        "original": "YOURS",
+        "suggestion": "RISKY"
+      },
+      {
+        "original": "STATUS",
+        "suggestion": "RESULT"
+      },
+      {
+        "original": "RETROVIRAL",
+        "suggestion": "ANTIRETRO"
+      },
+      {
+        "original": "PROPHYLAXIS",
+        "suggestion": "PREVENTION"
+      },
+      {
+        "original": "VIRALLOAD",
+        "suggestion": "LOADTEST"
+      },
+      {
+        "original": "ELISA",
+        "suggestion": "SWAB"
+      },
+      {
+        "original": "CD4COUNT",
+        "suggestion": "TCOUNTED"
+      }
+    ],
+    "final": {
+      "pairsFinal": [
+        [
+          "TRUVADA",
+          "DESCOVY"
+        ],
+        [
+          "KNOW",
+          "TEST"
+        ],
+        [
+          "YOURS",
+          "RISKY"
+        ],
+        [
+          "STATUS",
+          "RESULT"
+        ],
+        [
+          "CD4COUNT",
+          "TCOUNTED"
+        ]
+      ],
+      "finalWordList": [
+        "TRUVADA",
+        "DESCOVY",
+        "KNOW",
+        "TEST",
+        "YOURS",
+        "RISKY",
+        "STATUS",
+        "RESULT",
+        "CD4COUNT",
+        "TCOUNTED"
+      ]
+    }
+  }
+}

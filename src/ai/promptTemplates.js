@@ -51,39 +51,36 @@ OUTPUT:
  */
 export function buildLengthMatchPrompt({
   topic,
-  unpairedWords, // e.g., ["RETROVIRAL"]
-  excludeWords, // e.g., all topic words + hidden tokens; UPPERCASE
-  needAdditionalPairs = 0, // e.g., 1 means create 1 new pair (2 new words)
-  maxLettersPerToken = 12, // do not exceed grid dimension
+  anchors, // [{ word:"KNOW", length:4 }, ...]
+  excludeWords, // words never to reuse: anchors + fixedPairs flatten
+  fixedPairs = [], // [["TRUVADA","DESCOVY"]]
+  maxLettersPerToken = 12,
 }) {
   return {
     role: "user",
     content: `
-TASK: Provide same-length partners for the UNPAIRED topic words, and (if requested)
-generate additional NEW pairs to reach the target inventory.
+TASK: For EACH anchor, provide ONE medically valid word of the EXACT SAME LENGTH as its partner.
+Do NOT pair anchors with each other. Use new words only.
 
 INPUT:
 topic: ${topic}
-unpairedWords: ${JSON.stringify(unpairedWords)}
-excludeWords: ${JSON.stringify(excludeWords)}   // do NOT repeat any of these
-needAdditionalPairs: ${needAdditionalPairs}
+anchors: ${JSON.stringify(anchors)}
+fixedPairs: ${JSON.stringify(fixedPairs)}
+excludeWords: ${JSON.stringify(excludeWords)}
 maxLettersPerToken: ${maxLettersPerToken}
 
 RULES:
-- For each item in unpairedWords, suggest ONE medically valid word of the EXACT SAME LENGTH.
-- Strong topical relevance preferred; use US English; uppercase; no spaces (underscores ONLY if medically standard, e.g., "CD4_COUNT").
-- Do NOT output any suggestion that appears in excludeWords.
-- If needAdditionalPairs > 0: generate that many NEW PAIRS. Each pair consists of TWO distinct words of equal length (length ≤ maxLettersPerToken), medically relevant, and not in excludeWords.
-- Avoid trademarks unless widely standard in clinical usage.
-- OUTPUT STRICT JSON ONLY (no prose, no markdown).
+- EXACT same length per anchor. Uppercase. Allowed chars: A–Z, digits, underscore. No spaces/hyphens.
+- Do NOT output any word in excludeWords. Do NOT output stems/truncations (e.g., "DIAGNOS" for "STATUS" is invalid).
+- Suggestions should be medically relevant to the topic when possible.
+- OUTPUT STRICT JSON ONLY.
 
 OUTPUT:
 {
-  "matches": [
-    { "original":"RETROVIRAL", "suggestion":"ANTIVIRALS", "length":10, "rationale":"..." }
-  ],
-  "newPairs": [
-    { "word1":"SEROLOGIES", "word2":"IMMUNOLOGY", "length":10, "rationale":"..." }
+  "partners": [
+    { "original": "KNOW", "suggestion": "XXXX" },
+    { "original": "YOUR", "suggestion": "YYYY" },
+    ...
   ]
 }`,
   };

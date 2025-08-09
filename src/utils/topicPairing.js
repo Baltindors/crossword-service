@@ -1,89 +1,136 @@
-// Pairs topic words by identical length, returns pairs + unpaired,
-// and how many words are missing to reach a target total (default 10).
+// src/utils/topicPairing.js
 
 /**
- * Normalize a word for pairing rules.
+ * Normalize a word:
  * - Uppercase
  * - Remove spaces
- * - Allow A–Z and underscores (medical conventions like CD4_COUNT)
- * - Returns null if invalid after cleanup.
+ * - Allow A–Z, digits, underscores (e.g., CD4COUNT)
+ * Returns null if invalid after cleanup.
  */
 export function sanitizeWord(word) {
   if (!word || typeof word !== "string") return null;
   const cleaned = word.toUpperCase().replace(/\s+/g, "");
-  if (!/^[A-Z_]+$/.test(cleaned)) return null;
+  if (!/^[A-Z0-9_]+$/.test(cleaned)) return null;
   return cleaned;
 }
 
 /**
- * Pair words by identical length.
- * @param {string[]} words - raw words from config
- * @returns {{pairs: [string, string][], unpaired: string[], errors: string[]}}
+ * Build anchors with type annotation.
+ * @param {string[]} themeWords
+ * @param {string[]} topicWords
+ * @returns {{word:string,length:number,type:'theme'|'topic'}[]}
  */
-export function pairWordsByLength(words) {
-  const errors = [];
-  const sanitized = [];
-  const seen = new Set();
-
-  for (const w of words) {
-    const s = sanitizeWord(w);
-    if (!s) {
-      errors.push(`Invalid word skipped: "${w}"`);
-      continue;
-    }
-    sanitized.push(s);
-  }
-
-  // group by length
-  const byLen = new Map(); // len -> string[]
-  for (const w of sanitized) {
-    const len = w.length;
-    if (!byLen.has(len)) byLen.set(len, []);
-    byLen.get(len).push(w);
-  }
-
-  // make pairs
-  const pairs = [];
-  const unpaired = [];
-  for (const [len, arr] of byLen.entries()) {
-    // stable order pairing
-    for (let i = 0; i < arr.length; i += 2) {
-      if (i + 1 < arr.length) {
-        pairs.push([arr[i], arr[i + 1]]);
-      } else {
-        unpaired.push(arr[i]);
-      }
-    }
-  }
-
-  return { pairs, unpaired, errors };
+export function buildAnchors(themeWords = [], topicWords = []) {
+  const them = (themeWords || [])
+    .map(sanitizeWord)
+    .filter(Boolean)
+    .map((w) => ({ word: w, length: w.length, type: "theme" }));
+  const top = (topicWords || [])
+    .map(sanitizeWord)
+    .filter(Boolean)
+    .map((w) => ({ word: w, length: w.length, type: "topic" }));
+  return [...them, ...top]; // THEME FIRST (important for placement later)
 }
 
 /**
- * Analyze topic words against a target total count (default 10 = 5 pairs).
- * @param {string[]} topicWords
- * @param {number} targetTotal
+ * Pair anchors with constraints:
+ * - Apply fixedPairs first.
+ * - Pair THEME ↔ TOPIC by identical length.
+ * - Pair remaining TOPIC ↔ TOPIC by identical length.
+ * - Never pair THEME ↔ THEME.
+ *
+ * @param {{word:string,length:number,type:'theme'|'topic'}[]} anchors (theme first)
+ * @param {[string,string][]} fixedPairs (already uppercased or raw; sanitized internally)
  * @returns {{
- *   pairs: [string, string][],
+ *   pairs: [string,string][],
  *   unpaired: string[],
- *   counts: { total:number, pairsCount:number, unpairedCount:number, missingToTarget:number },
- *   errors: string[]
+ *   excludeWords: string[],
+ *   anchorsNeedingPartners: {word:string,length:number}[],
+ *   counts: { anchors:number, paired:number, unpaired:number }
  * }}
  */
-export function analyzeTopicWords(topicWords, targetTotal = 10) {
-  const { pairs, unpaired, errors } = pairWordsByLength(topicWords);
-  const uniqueCount = pairs.length * 2 + unpaired.length;
-  const missingToTarget = Math.max(0, targetTotal - uniqueCount);
+export function pairAnchorsWithConstraints(anchors, fixedPairs = []) {
+  const byWord = new Map(anchors.map((a) => [a.word, a]));
+  const taken = new Set();
+  const pairs = [];
+
+  // sanitize fixed pairs
+  const fixed = [];
+  for (const [a, b] of fixedPairs || []) {
+    const A = sanitizeWord(a),
+      B = sanitizeWord(b);
+    if (A && B) fixed.push([A, B]);
+  }
+
+  // 1) apply fixed pairs first
+  for (const [a, b] of fixed) {
+    if (byWord.has(a) && byWord.has(b) && !taken.has(a) && !taken.has(b)) {
+      pairs.push([a, b]);
+      taken.add(a);
+      taken.add(b);
+    }
+  }
+
+  // remaining anchors
+  const left = anchors.filter((a) => !taken.has(a.word));
+
+  // group remaining by length, separated by type
+  const byLenTheme = new Map();
+  const byLenTopic = new Map();
+  for (const a of left) {
+    const bucket = a.type === "theme" ? byLenTheme : byLenTopic;
+    if (!bucket.has(a.length)) bucket.set(a.length, []);
+    bucket.get(a.length).push(a.word);
+  }
+
+  // 2) pair THEME ↔ TOPIC by equal length
+  for (const [len, themes] of byLenTheme.entries()) {
+    const topics = (byLenTopic.get(len) || []).filter((w) => !taken.has(w));
+    let j = 0;
+    for (const th of themes) {
+      if (taken.has(th)) continue;
+      while (j < topics.length && taken.has(topics[j])) j++;
+      if (j >= topics.length) break;
+      const tp = topics[j++];
+      pairs.push([th, tp]);
+      taken.add(th);
+      taken.add(tp);
+    }
+  }
+
+  // 3) pair remaining TOPIC ↔ TOPIC by equal length
+  for (const [len, topics] of byLenTopic.entries()) {
+    const pool = topics.filter((w) => !taken.has(w));
+    for (let i = 0; i + 1 < pool.length; i += 2) {
+      const a = pool[i],
+        b = pool[i + 1];
+      if (taken.has(a) || taken.has(b)) continue;
+      pairs.push([a, b]);
+      taken.add(a);
+      taken.add(b);
+    }
+  }
+
+  // 4) leftovers are unpaired (includes any THEME that didn't find a TOPIC)
+  const unpaired = anchors.map((a) => a.word).filter((w) => !taken.has(w));
+
+  // Exclusions for AI (don’t reuse these)
+  const excludeSet = new Set([...anchors.map((a) => a.word), ...pairs.flat()]);
+
+  // The anchors that still need NEW partners from AI
+  const anchorsNeedingPartners = anchors
+    .filter((a) => !taken.has(a.word))
+    .map((a) => ({ word: a.word, length: a.length }));
 
   return {
     pairs,
     unpaired,
+    excludeWords: Array.from(excludeSet),
+    anchorsNeedingPartners,
     counts: {
-      total: uniqueCount,
-      pairsCount: pairs.length,
-      unpairedCount: unpaired.length,
-      missingToTarget, // how many more words are needed to reach 10 total
+      anchors: anchors.length,
+      paired: pairs.length * 2,
+      unpaired: anchorsNeedingPartners.length,
     },
-    errors,
   };
 }
