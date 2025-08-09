@@ -202,6 +202,11 @@ async function main() {
     JSON.stringify(foundation, null, 2)
   );
   console.log("Wrote src/data/foundation.json");
+  // Log the foundation object to the console for inspection
+  console.log(
+    "foundation.json content:\n",
+    JSON.stringify(foundation, null, 2)
+  );
 }
 
 // allow `node src/index.js`
