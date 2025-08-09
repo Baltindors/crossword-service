@@ -2,10 +2,12 @@ Sample logic with minimum AI
 
 get the topic, get the words, order in pairs of same length,
 how many are there missing a pair.
+**** might need an open CLI dictionary of medical terms ****
 send to AI to pair them with a word preferbly with topic that is the same length
 return the pair and add in the array.
 get the theme ask AI how they should be broken down for a 12 by 12 grid have it return it in order
 and paired with word of equal lenght prioratizing each other.
+
 
 pair each point with its symetric counterpart
 add each word from topic and theme in the grid with all their length validations theme always accross
