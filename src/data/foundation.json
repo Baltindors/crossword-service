@@ -3,7 +3,7 @@
     "topic": "HIV Prevention",
     "difficulty": 5,
     "gridMaxLetters": 12,
-    "createdAt": "2025-08-09T22:00:21.956Z"
+    "createdAt": "2025-08-09T22:38:38.690Z"
   },
   "theme": {
     "phrase": "KNOW YOUR STATUS",
@@ -161,31 +161,31 @@
       },
       {
         "original": "YOUR",
-        "suggestion": "RISK"
+        "suggestion": "SAFE"
       },
       {
         "original": "STATUS",
-        "suggestion": "RESULT"
+        "suggestion": "SCREEN"
       },
       {
         "original": "ANTIBODIES",
-        "suggestion": "IMMUNOGLOBULINS"
-      },
-      {
-        "original": "PROPHYLAXIS",
         "suggestion": "PREVENTION"
       },
       {
+        "original": "PROPHYLAXIS",
+        "suggestion": "INTERVENTION"
+      },
+      {
         "original": "VIRALLOAD",
-        "suggestion": "LOADS"
+        "suggestion": "MEDICATION"
       },
       {
         "original": "ELISA",
-        "suggestion": "TESTS"
+        "suggestion": "RAPID"
       },
       {
         "original": "CD4COUNT",
-        "suggestion": "CELLCOUNT"
+        "suggestion": "TREATING"
       }
     ],
     "final": {
@@ -200,15 +200,23 @@
         ],
         [
           "YOUR",
-          "RISK"
+          "SAFE"
         ],
         [
           "STATUS",
-          "RESULT"
+          "SCREEN"
+        ],
+        [
+          "ANTIBODIES",
+          "PREVENTION"
         ],
         [
           "ELISA",
-          "TESTS"
+          "RAPID"
+        ],
+        [
+          "CD4COUNT",
+          "TREATING"
         ]
       ],
       "finalWordList": [
@@ -217,11 +225,15 @@
         "KNOW",
         "TEST",
         "YOUR",
-        "RISK",
+        "SAFE",
         "STATUS",
-        "RESULT",
+        "SCREEN",
+        "ANTIBODIES",
+        "PREVENTION",
         "ELISA",
-        "TESTS"
+        "RAPID",
+        "CD4COUNT",
+        "TREATING"
       ]
     }
   }

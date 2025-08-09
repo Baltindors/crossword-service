@@ -53,8 +53,6 @@ export function buildLengthMatchPrompt({
   topic,
   anchors, // [{ word:"KNOW", length:4 }, ...]
   excludeWords, // strings to avoid (anchors + fixedPairs + anything used)
-  fixedPairs = [], // [["DRUGA","DRUGB"], ...] for context only
-  maxLettersPerToken = 12,
 }) {
   return {
     role: "user",
@@ -63,30 +61,26 @@ You are producing STRICT JSON for length-matched partners.
 
 TASK
 For EACH anchor, return EXACTLY ONE NEW word of the SAME LENGTH as the anchor word.
-Prefer medically relevant terms related to "${topic}".
-IF AND ONLY IF no medically relevant term of the exact length exists, return a neutral common English word of the same length as a fallback.
+Prefer medically relevant word related to "${topic}".
+IF AND ONLY IF no medically relevant term/word of the exact length exists, return a neutral common English word of the same length as a fallback.
 
 
 CONTEXT
 topic: ${topic}
 anchors: ${JSON.stringify(anchors)}
-fixedPairs: ${JSON.stringify(fixedPairs)}
 excludeWords: ${JSON.stringify(excludeWords)}
-maxLettersPerToken: ${maxLettersPerToken}
 
 HARD RULES (must satisfy all)
 - Length: suggestion.length === anchor.length (exact match).
 - Charset: UPPERCASE, characters allowed: A–Z, 0–9, underscore (_). No spaces, hyphens, punctuation.
 - New words only: do NOT output any string in excludeWords, and do NOT output the anchor itself.
 - Do NOT pair anchors with each other; suggestions must be words not present in anchors.
-- No stems/truncations/partial roots (e.g., "DIAGNO" is invalid for "STATUS").
-- Prefer medically relevant terms for the given topic when possible.
+- No stems/truncations/partial roots.
 - Output ONLY JSON as specified below. No commentary.
 
 INVALID EXAMPLES (do NOT output)
 - Length mismatch: anchor "RETROVIRAL"(10) → "ANTIVIRAL"(9)
 - Truncation: anchor "STATUS"(6) → "DIAGNO"(6) is invalid because it’s a clipped stem
-- Illegal chars: "VIRAL-LOAD", "HIV TEST"
 
 VALID EXAMPLES
 - "KNOW"(4) → "TEST"(4)

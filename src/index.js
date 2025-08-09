@@ -22,17 +22,27 @@ const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const up = (s) => String(s || "").toUpperCase();
 const upList = (arr) => (arr ?? []).map(up);
 
+function stripCodeFences(str) {
+  return str
+    .replace(/^```(?:json)?/i, "") // remove starting ```json or ```
+    .replace(/```$/i, "") // remove ending ```
+    .trim();
+}
+
 async function callJSON(system, user) {
   const res = await client.chat.completions.create({
     model: process.env.OPENAI_MODEL || "gpt-4o-mini",
     messages: [{ role: "system", content: system }, user],
     temperature: 0,
   });
-  const text = res.choices?.[0]?.message?.content ?? "";
+
+  let text = res.choices?.[0]?.message?.content ?? "";
+  text = stripCodeFences(text);
+
   try {
     return JSON.parse(text);
   } catch {
-    console.error("❌ Invalid JSON from model:\n", text);
+    console.error("Invalid JSON from model:\n", text);
     throw new Error("Invalid JSON");
   }
 }
