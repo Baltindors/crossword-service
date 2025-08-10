@@ -1,23 +1,47 @@
 Sample logic with minimum AI
 
-get the topic, get the words, order in pairs of same length,
-how many are there missing a pair.
-**** might need an open CLI dictionary of medical terms ****
-send to AI to pair them with a word preferbly with topic that is the same length
-return the pair and add in the array.
-get the theme ask AI how they should be broken down for a 12 by 12 grid have it return it in order
-and paired with word of equal lenght prioratizing each other.
+FROM USER
+    topic, hiddenThemePhrase, topicWords[], difficulty
 
+SYSTEM (local)
+    Sanitize & type words (theme vs topic).
+    Pairing (no AI):
+    Pair theme ↔ topic by exact length.
+    Pair remaining topic ↔ topic by exact length.
+    Never theme ↔ theme.
+    Keep unpaired[] (anchors still needing partners).
 
-pair each point with its symetric counterpart
-add each word from topic and theme in the grid with all their length validations theme always accross
-topic can be accross or down. 
-for each entry enter the corresponding symetrical pair, if its not possible retry until it fits.
-everytime you enter a word remove all of the pairs that are being occupied for the array of empty pairs
-place the black spaces in the remaining available pairs based on the difficulty, with some rules about 
-at the end of words and not leaving only spaces for 2 letter words. prioratize diagonal placement in the middle
-after this is done, send the grid to LLM to fill in with filler words, prioratizing medical words for the topic
-after that return the grid, llm needs to validate that they are all valide words accross and vertical.
+ONELOOK / DATAMUSE (dictionary-first)
+    3) Candidates per anchor (exact length):
+    Build URL: https://api.datamuse.com/words?ml=<topic>&topics=medical&sp=<pattern>&max=100
+    sp uses ? per character: e.g., RETROVIRAL → ?????????? (10).
+    Cache results by (topic,length) so you don’t re-hit the API.
+    Locally rank by score, frequency tag (f:), your medical lexicon boost, and simple topic overlaps. Keep top 10.
 
+OPENAI (selection-only, small prompts)
+    4) Pick from top 10:
+    For each anchor needing a partner, send: anchor + top 10 candidates + excludeWords.
+    “Choose exactly one from this list; do not invent.”
+    This keeps token use tiny and guarantees exact length.
 
+SYSTEM (grid fill)
+    5) Place theme spans first in a 12×12 with 180° rotational symmetry.
+    Use backtracking, not pure random: order by longest slots → highest branching factor first.
+    Respect American rules: no two-letter entries, no isolated blocks, every letter checked (no unchecked cells).
+    Fill remaining slots using your paired list first, then other topic words, then dictionary candidates that match pattern constraints.
+    Black squares
+    Enforce symmetry.
+    Avoid 2-letter slots.
+    Keep total block count within a reasonable range for 12×12 (aim ~15–22; tune).
 
+ONELOOK (pattern queries for crosses)
+    8) Pattern lookup for crossing checks:
+    As you fill, for a slot with known letters (e.g., C?4CO?NT), query:
+    https://api.datamuse.com/words?sp=C?4CO?NT&topics=medical&max=100
+    sp supports fixed letters and ? wildcards; use this to validate candidates down and across.
+    Note: Datamuse is best with letters; digits/underscores like CD4COUNT may be sparse—treat such domain terms as forced entries from your own list, not from the API.
+
+OPENAI (clues only)
+    9) Generate clues based on difficulty.
+    Provide answer, part-of-speech, brief definition/context, and any red lines (no stigmatizing phrasing, no advice).
+    Ask for multiple clue styles (straight, educational, trickier) and pick based on difficulty.
