@@ -1,9 +1,11 @@
 // src/index.js
-import "dotenv/config";
+import "dotenv/config"; // load env FIRST
 import fs from "fs/promises";
 import OpenAI from "openai";
+
+import { GRID_MAX_LETTERS } from "./utils/constants.js";
 import { puzzleConfig } from "./config/puzzleConfig.js";
-import { getMedicalWordsSameLength } from "./utils/dictionary.js";
+import { buildCandidatePools } from "./utils/dictionary.js"; // <-- new length-aware pools
 import {
   buildAnchors,
   pairAnchorsWithConstraints,
@@ -11,21 +13,20 @@ import {
 import {
   buildSystemPrompt,
   buildHiddenWordsPrompt,
-  buildLengthMatchPrompt,
+  buildSelectionPrompt, // returns { suggestion }
 } from "./ai/promptTemplates.js";
 
-const GRID_MAX_LETTERS = 12;
 const OK = /^[A-Z0-9_]+$/;
-
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 const up = (s) => String(s || "").toUpperCase();
 const upList = (arr) => (arr ?? []).map(up);
 
+// Remove fenced code if model goes rogue
 function stripCodeFences(str) {
   return str
-    .replace(/^```(?:json)?/i, "") // remove starting ```json or ```
-    .replace(/```$/i, "") // remove ending ```
+    .replace(/^```(?:json)?/i, "")
+    .replace(/```$/i, "")
     .trim();
 }
 
@@ -53,7 +54,7 @@ async function getHiddenTokens({ topic, phrase }) {
     topic,
     themePhrase: phrase,
     maxLettersPerToken: GRID_MAX_LETTERS,
-    maxTokens: 12,
+    maxTokens: GRID_MAX_LETTERS,
   });
   const json = await callJSON(system, user);
   return upList(json.hiddenWordsOrdered);
@@ -69,7 +70,7 @@ function validateSuggestion(orig, sugg, excludeSet) {
 }
 
 async function main() {
-  console.log("🚀 Anchor pairing pipeline starting…");
+  console.log("Anchor pairing pipeline starting…");
   await fs.mkdir("src/data", { recursive: true });
 
   const {
@@ -77,7 +78,7 @@ async function main() {
     difficulty,
     theme,
     topicWords,
-    fixedPairs: fixedPairsFromCfg, // <- optional, user-provided
+    fixedPairs: fixedPairsFromCfg,
   } = puzzleConfig;
 
   // 1) Theme tokens (AI)
@@ -85,86 +86,106 @@ async function main() {
   const hiddenTokens = await getHiddenTokens({ topic, phrase: theme.phrase });
   console.log("   → hiddenTokens:", hiddenTokens);
 
-  // 2) Build typed anchors
+  // 2) Build typed anchors (theme first)
   const anchors = buildAnchors(hiddenTokens, topicWords);
 
-  // 3) OPTIONAL: fixed pairs come from config only (no hardcoding)
+  // 3) Optional fixedPairs from config (uppercased)
   const fixedPairs = (fixedPairsFromCfg ?? []).map(([a, b]) => [up(a), up(b)]);
 
-  // 4) Local pairing
+  // 4) Local deterministic pairing (theme↔topic, then topic↔topic; never theme↔theme)
   const pairing = pairAnchorsWithConstraints(anchors, fixedPairs);
   console.log(
     `   → paired ${pairing.counts.paired} anchors, ${pairing.counts.unpaired} still need partners`
   );
 
-  // 5) Ask AI only for missing partners (dictionary-first approach)
-  let partners = [];
-  if (pairing.anchorsNeedingPartners.length > 0) {
-    console.log(
-      `🔹 Requesting partners for ${pairing.anchorsNeedingPartners.length} anchors…`
+  // 5) Build OneLook candidate pools by needed lengths (to keep prompts small + accurate)
+  const neededLengths = [
+    ...new Set(pairing.anchorsNeedingPartners.map((a) => a.length)),
+  ].sort((a, b) => a - b);
+  const pools = await buildCandidatePools({
+    topic,
+    lengths: neededLengths,
+    perLength: 20, // adjust 10–30 as you like
+  });
+
+  // 6) AI selection pass, deterministic order of anchors: (len ASC, word ASC)
+  const excludeSet = new Set(pairing.excludeWords);
+  const aiPartners = [];
+
+  const anchorsNeedingPartnersSorted = [...pairing.anchorsNeedingPartners].sort(
+    (a, b) => {
+      if (a.length !== b.length) return a.length - b.length;
+      return a.word.localeCompare(b.word);
+    }
+  );
+
+  for (const anchor of anchorsNeedingPartnersSorted) {
+    const original = up(anchor.word);
+    const pool = (pools.get(anchor.length) || []).filter(
+      (w) => w !== original && !excludeSet.has(w)
     );
 
-    for (const anchor of pairing.anchorsNeedingPartners) {
-      // Step 5.1 – Fetch medical candidates of same length
-      const candidates = await getMedicalWordsSameLength(anchor.word, topic);
+    // Cap prompt size but keep top-scored words (pools already sorted by score)
+    const candidates = pool.slice(0, 15);
 
+    try {
       if (candidates.length > 0) {
-        // Step 5.2 – Ask AI to choose from vetted list
         const system = buildSystemPrompt();
-        const user = buildSelectionPrompt(anchor.word, candidates);
-        try {
-          const { original, suggestion } = await callJSON(system, user);
-          partners.push({ original: up(original), suggestion: up(suggestion) });
-        } catch (err) {
-          console.error(`❌ Failed selection for ${anchor.word}`, err);
+        const user = buildSelectionPrompt({
+          topic,
+          anchor,
+          candidates,
+          excludeWords: Array.from(excludeSet),
+        });
+        const out = await callJSON(system, user);
+        const suggestion = up(out?.suggestion ?? "");
+
+        if (validateSuggestion(original, suggestion, excludeSet)) {
+          aiPartners.push({ original, suggestion });
+          excludeSet.add(suggestion);
+        } else {
+          console.warn(`⚠️ Rejected AI pick for ${original}: "${suggestion}"`);
+          // Optional deterministic fallback: first unused candidate
+          const fallback = candidates.find((c) =>
+            validateSuggestion(original, c, excludeSet)
+          );
+          if (fallback) {
+            aiPartners.push({ original, suggestion: fallback });
+            excludeSet.add(fallback);
+            console.warn(`   ↳ Used fallback candidate: "${fallback}"`);
+          }
         }
       } else {
-        // Step 5.3 – Fall back to generative prompt if no candidates found
-        const system = buildSystemPrompt();
-        const user = buildLengthMatchPrompt({
-          topic,
-          anchors: [anchor], // just this anchor
-          excludeWords: pairing.excludeWords,
-          fixedPairs,
-          maxLettersPerToken: GRID_MAX_LETTERS,
-        });
-        try {
-          const { partners: aiPartners = [] } = await callJSON(system, user);
-          partners.push(
-            ...aiPartners.map((p) => ({
-              original: up(p.original),
-              suggestion: up(p.suggestion),
-            }))
-          );
-        } catch (err) {
-          console.error(`❌ Failed generation for ${anchor.word}`, err);
-        }
+        console.warn(
+          `⚠️ No candidates for ${original} (len=${anchor.length}). Skipping.`
+        );
+      }
+    } catch (err) {
+      console.error(`❌ AI selection failed for ${original}`, err);
+      // Optional deterministic fallback on error
+      const fallback = candidates.find((c) =>
+        validateSuggestion(original, c, excludeSet)
+      );
+      if (fallback) {
+        aiPartners.push({ original, suggestion: fallback });
+        excludeSet.add(fallback);
+        console.warn(`   ↳ Used fallback candidate after error: "${fallback}"`);
       }
     }
-
-    console.log("   → AI partners count:", partners.length);
   }
 
-  // 6) Validate + merge AI suggestions
-  const excludeSet = new Set(pairing.excludeWords);
-  const partnersMap = new Map();
-  for (const p of partners) {
-    const orig = up(p.original);
-    const sugg = up(p.suggestion);
-    if (validateSuggestion(orig, sugg, excludeSet)) {
-      partnersMap.set(orig, sugg);
-      excludeSet.add(sugg);
-    }
-  }
-
+  // 7) Merge to final pairs
+  const partnersMap = new Map(
+    aiPartners.map((p) => [p.original, p.suggestion])
+  );
   const pairsFinal = [...pairing.pairs];
   for (const a of pairing.anchorsNeedingPartners) {
-    const partner = partnersMap.get(a.word);
-    if (partner) pairsFinal.push([a.word, partner]);
+    const partner = partnersMap.get(up(a.word));
+    if (partner) pairsFinal.push([up(a.word), partner]);
   }
   const finalWordList = Array.from(new Set(pairsFinal.flat()));
 
-  // 7) Build foundation object
+  // 8) Build foundation object
   const foundation = {
     meta: {
       topic,
@@ -179,17 +200,17 @@ async function main() {
     },
     topic: { words: upList(topicWords) },
     pairing: {
-      mode: "anchor+local",
+      mode: "anchor+local+onelook",
       counts: pairing.counts,
       anchors,
       fixedPairs,
       local: pairing,
-      aiPartners: partners,
+      aiPartners,
       final: { pairsFinal, finalWordList },
     },
   };
 
-  // 8) Save to file
+  // 9) Save to file
   console.log("📄 Final JSON:\n", JSON.stringify(foundation, null, 2));
   await fs.writeFile(
     "src/data/foundation.json",

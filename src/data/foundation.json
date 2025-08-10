@@ -3,7 +3,7 @@
     "topic": "HIV Prevention",
     "difficulty": 5,
     "gridMaxLetters": 12,
-    "createdAt": "2025-08-09T22:49:19.951Z"
+    "createdAt": "2025-08-10T22:12:07.063Z"
   },
   "theme": {
     "phrase": "KNOW YOUR STATUS",
@@ -26,7 +26,7 @@
     ]
   },
   "pairing": {
-    "mode": "anchor+local",
+    "mode": "anchor+local+onelook",
     "counts": {
       "anchors": 10,
       "paired": 2,
@@ -161,31 +161,31 @@
       },
       {
         "original": "YOUR",
-        "suggestion": "SAFE"
-      },
-      {
-        "original": "STATUS",
-        "suggestion": "SCREEN"
-      },
-      {
-        "original": "ANTIBODIES",
-        "suggestion": "PREVENTION"
-      },
-      {
-        "original": "PROPHYLAXIS",
-        "suggestion": "POSTEXPOSURE"
-      },
-      {
-        "original": "VIRALLOAD",
-        "suggestion": "MEDICATION"
+        "suggestion": "CURE"
       },
       {
         "original": "ELISA",
-        "suggestion": "RAPID"
+        "suggestion": "VIRUS"
+      },
+      {
+        "original": "STATUS",
+        "suggestion": "IMMUNE"
       },
       {
         "original": "CD4COUNT",
-        "suggestion": "MONITOR"
+        "suggestion": "EXPOSURE"
+      },
+      {
+        "original": "VIRALLOAD",
+        "suggestion": "ANTIVIRAL"
+      },
+      {
+        "original": "ANTIBODIES",
+        "suggestion": "ANTISEPTIC"
+      },
+      {
+        "original": "PROPHYLAXIS",
+        "suggestion": "VACCINATION"
       }
     ],
     "final": {
@@ -200,19 +200,31 @@
         ],
         [
           "YOUR",
-          "SAFE"
+          "CURE"
         ],
         [
           "STATUS",
-          "SCREEN"
+          "IMMUNE"
         ],
         [
           "ANTIBODIES",
-          "PREVENTION"
+          "ANTISEPTIC"
+        ],
+        [
+          "PROPHYLAXIS",
+          "VACCINATION"
+        ],
+        [
+          "VIRALLOAD",
+          "ANTIVIRAL"
         ],
         [
           "ELISA",
-          "RAPID"
+          "VIRUS"
+        ],
+        [
+          "CD4COUNT",
+          "EXPOSURE"
         ]
       ],
       "finalWordList": [
@@ -221,13 +233,19 @@
         "KNOW",
         "TEST",
         "YOUR",
-        "SAFE",
+        "CURE",
         "STATUS",
-        "SCREEN",
+        "IMMUNE",
         "ANTIBODIES",
-        "PREVENTION",
+        "ANTISEPTIC",
+        "PROPHYLAXIS",
+        "VACCINATION",
+        "VIRALLOAD",
+        "ANTIVIRAL",
         "ELISA",
-        "RAPID"
+        "VIRUS",
+        "CD4COUNT",
+        "EXPOSURE"
       ]
     }
   }

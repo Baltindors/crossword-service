@@ -12,7 +12,6 @@ import OpenAI from "openai";
 import {
   buildSystemPrompt,
   buildHiddenWordsPrompt,
-  buildLengthMatchPrompt,
   buildFillerWordsPrompt,
   buildValidationPrompt,
   buildCluePrompt,
@@ -72,15 +71,6 @@ async function main() {
         topic,
         themePhrase: theme.phrase,
         maxHiddenWords: 12,
-      });
-      await run(system, user);
-      break;
-    }
-
-    case "length": {
-      const user = buildLengthMatchPrompt({
-        topic,
-        unpairedWords,
       });
       await run(system, user);
       break;

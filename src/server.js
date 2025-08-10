@@ -1,8 +1,9 @@
 import express from "express";
 import { readFile } from "fs/promises";
+import { PORT, FOUNDATION_FILE_PATH } from "./utils/constants.js";
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = PORT;
 
 app.use(express.json());
 
@@ -11,7 +12,7 @@ app.get("/", (req, res) => {
 });
 
 app.get("/foundation", async (req, res) => {
-  const data = await readFile("src/data/foundation.json", "utf8");
+  const data = await readFile(FOUNDATION_FILE_PATH, "utf8");
   res.json(JSON.parse(data));
 });
 

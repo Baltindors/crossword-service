@@ -49,34 +49,34 @@ OUTPUT:
  * For any topic words you can't locally pair by length, ask for same-length, on-topic
  * suggestions to pair with. You pass only the unpaired list.
  */
+// src/ai/promptTemplates.js
 export function buildSelectionPrompt({
   topic,
-  anchor, // { word:"KNOW", length:4 }
-  candidates, // array of exact-length candidates from dictionary
-  excludeWords, // strings to avoid
+  anchor,
+  candidates,
+  excludeWords,
 }) {
   return {
     role: "user",
-    content: `
-Select the most appropriate medically relevant word from the provided list for the anchor "${
-      anchor.word
-    }".
-
-TOPIC: ${topic}
-ANCHOR LENGTH: ${anchor.length}
-EXCLUDE WORDS: ${JSON.stringify(excludeWords)}
-CANDIDATES: ${JSON.stringify(candidates)}
-
-RULES:
-- Choose exactly one word from the candidates list.
-- Do NOT modify or invent new words.
-- Must not choose anything from EXCLUDE WORDS.
-- Preserve case as uppercase in your suggestion.
-- Output strict JSON only.
-
-OUTPUT FORMAT:
-{ "original": "${anchor.word}", "suggestion": "<CHOSEN_WORD>" }
-    `.trim(),
+    content: JSON.stringify({
+      task: "choose_from_candidates",
+      topic,
+      anchor: { word: anchor.word, length: anchor.length },
+      rules: [
+        "Pick EXACTLY ONE word from candidates.",
+        "The choice MUST be present in candidates (verbatim).",
+        "It MUST have the same length as anchor.length.",
+        "It MUST match regex ^[A-Z0-9_]+$.",
+        "It MUST NOT equal the anchor.word.",
+        "It MUST NOT be present in excludeWords.",
+        "Output STRICT JSON only. No code fences, no extra text.",
+      ],
+      candidates, // keep this list capped (e.g., <= 15) before calling
+      excludeWords: Array.from(new Set(excludeWords || [])),
+      output_format: { suggestion: "STRING | null" },
+      // If nothing is valid after applying rules, return { "suggestion": null }.
+      when_no_valid_choice: "Return null suggestion.",
+    }),
   };
 }
 

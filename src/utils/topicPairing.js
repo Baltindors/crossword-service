@@ -82,6 +82,7 @@ export function pairAnchorsWithConstraints(anchors, fixedPairs = []) {
     if (!bucket.has(a.length)) bucket.set(a.length, []);
     bucket.get(a.length).push(a.word);
   }
+  // sort alphabetically within each same-length bucket (deterministic pairing)
 
   // 2) pair THEME ↔ TOPIC by equal length
   for (const [len, themes] of byLenTheme.entries()) {
