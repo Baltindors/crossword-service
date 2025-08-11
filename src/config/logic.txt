@@ -1,47 +1,125 @@
-Sample logic with minimum AI
+0) Inputs & global rules
+User input: topic, hiddenThemePhrase, topicWords[], difficulty.
+Constraints:
+Grid size (e.g., 12×12), 180° rotational symmetry.
+Token regex: ^[A-Z0-9_]+$ (uppercase, no spaces).
+American rules: every letter checked; no 2-letter entries; no isolated blocks; reasonable block count (target ~15–22 for 12×12, tune).
 
-FROM USER
-    topic, hiddenThemePhrase, topicWords[], difficulty
+1) Normalize & classify (local)
+Uppercase + strip spaces/dashes for all inputs.
+Theme tokens: use AI once to split hiddenThemePhrase into ordered tokens.
+Topic words: sanitized list; keep a master exclude set (tokens + topic words) so nothing echoes later.
+Sort both lists alphabetically for determinism (you can also keep original order as metadata).
+Artifacts
+foundation.meta (topic, difficulty, gridMaxLetters, timestamps)
+foundation.theme.tokens[]
+foundation.topic.words[]
+excludeSet[]
 
-SYSTEM (local)
-    Sanitize & type words (theme vs topic).
-    Pairing (no AI):
-    Pair theme ↔ topic by exact length.
-    Pair remaining topic ↔ topic by exact length.
-    Never theme ↔ theme.
-    Keep unpaired[] (anchors still needing partners).
+2) Theme containers (embed tokens in longer real words; local + dictionary)
+For each token T (len t):
+For lengths L ∈ [t+2 … min(t+6, gridMax)]:
+Pull dictionary candidates (OneLook/Datamuse or your local list) for length L.
+Filter word.includes(T), sanitize, dedupe.
+Rank (provider score, medical boost, frequency, simple topic overlap).
+Keep top 10–20 per token.
+Artifacts
+theme_containers.json: { [token]: string[] } (sorted)
 
-ONELOOK / DATAMUSE (dictionary-first)
-    3) Candidates per anchor (exact length):
-    Build URL: https://api.datamuse.com/words?ml=<topic>&topics=medical&sp=<pattern>&max=100
-    sp uses ? per character: e.g., RETROVIRAL → ?????????? (10).
-    Cache results by (topic,length) so you don’t re-hit the API.
-    Locally rank by score, frequency tag (f:), your medical lexicon boost, and simple topic overlaps. Keep top 10.
+3) Candidate pools by length (dictionary-first, no AI)
+Build per-length pools for all non-theme slots you expect:
+Query OneLook/Datamuse with ml=<topic>&topics=medical&sp=< ?×L >&max=300.
+Cache by (topic, length).
+Sanitize, dedupe, rank (provider score, medical boost, frequency).
+Keep top 10–30 per length.
+Optional tiers:
+medical[L] (primary)
+general[L] (fallback fillers, unlocked only when needed)
+Artifacts
+pools.json: { [length]: string[] } (and optionally { tier: "medical"|"general" })
 
-OPENAI (selection-only, small prompts)
-    4) Pick from top 10:
-    For each anchor needing a partner, send: anchor + top 10 candidates + excludeWords.
-    “Choose exactly one from this list; do not invent.”
-    This keeps token use tiny and guarantees exact length.
+4) Solver inputs (no pre-pairing; solver chooses)
+Slots: parse the grid layout (with blocks) into across/down slots:
 
-SYSTEM (grid fill)
-    5) Place theme spans first in a 12×12 with 180° rotational symmetry.
-    Use backtracking, not pure random: order by longest slots → highest branching factor first.
-    Respect American rules: no two-letter entries, no isolated blocks, every letter checked (no unchecked cells).
-    Fill remaining slots using your paired list first, then other topic words, then dictionary candidates that match pattern constraints.
-    Black squares
-    Enforce symmetry.
-    Avoid 2-letter slots.
-    Keep total block count within a reasonable range for 12×12 (aim ~15–22; tune).
+type Slot = {
+  id: string; dir: "across"|"down";
+  row: number; col: number; length: number;
+  crosses: Array<{ otherId: string; atThis: number; atOther: number }>;
+  isTheme: boolean; themeToken?: string; // if this slot must embed a token
+};
 
-ONELOOK (pattern queries for crosses)
-    8) Pattern lookup for crossing checks:
-    As you fill, for a slot with known letters (e.g., C?4CO?NT), query:
-    https://api.datamuse.com/words?sp=C?4CO?NT&topics=medical&max=100
-    sp supports fixed letters and ? wildcards; use this to validate candidates down and across.
-    Note: Datamuse is best with letters; digits/underscores like CD4COUNT may be sparse—treat such domain terms as forced entries from your own list, not from the API.
+Domains at start:
+Theme slots: domain = themeContainers[token] ∩ pattern.
+Others: domain = poolsByLen[length] ∩ pattern.
+pattern = fixed letters already placed; use positional indexes for fast intersection:
+posIndex[L][i][ch] -> Set<string>.
 
-OPENAI (clues only)
-    9) Generate clues based on difficulty.
-    Provide answer, part-of-speech, brief definition/context, and any red lines (no stigmatizing phrasing, no advice).
-    Ask for multiple clue styles (straight, educational, trickier) and pick based on difficulty.
+5) Solver strategy (CSP: backtracking + forward checking)
+MRV (Minimum Remaining Values): pick the slot with the smallest domain.
+Tie-breakers: most crossings → longer length → alphabetical.
+LCV ordering for candidates: pick the word that eliminates the fewest options for neighbors (approximate by counting survivors).
+Forward checking: when you place a word, write letters and immediately prune intersecting domains; if any becomes empty → backtrack.
+Determinism: everything sorted; when equal, fall back to alphabetical.
+Soft preferences (optional):
+If you have “buddy” hints (e.g., ANTIBODIES prefers ANTIGENIC), use them only to prioritize candidate order—never to force matches.
+Fallback policy:
+Start with medical pools.
+If a slot’s domain empties or backtracks exceed a threshold:
+unlock general tier for that slot’s length and continue.
+Output
+
+type SolverOutput = {
+  ok: boolean;
+  assignments: Map<slotId, word>;
+  usedWords: Set<string>;
+  stats: { steps: number; backtracks: number; durationMs: number; fillersUsed: number };
+};
+
+6) Optional online pattern checks (sparingly)
+If you want an extra safety net during tricky crosses:
+Use Datamuse pattern queries (sp=C?4CO?NT&topics=medical) only when a domain is nearly empty and you need to expand choices.
+Don’t rely on APIs for tokens like CD4COUNT (digits/underscores are spotty); treat those as forced from your internal lexicon.
+
+7) Clue generation (post-solve; AI is fine here)
+For each final answer, ask for multiple clue styles in strict JSON:
+Straight (definition)
+Educational (1-line prevention/diagnostics context)
+Tricky (harder surface, still fair)
+Map to difficulty:
+Easy: straight/educational, no jargon, no stigma.
+Medium: mix straight + mild wordplay.
+Hard: trickier; still medically accurate.
+Keep red-lines (no advice, no stigma).
+Artifacts
+clues.json: { answer: { straight: "...", educational: "...", tricky: "..." } }
+
+8) Orchestration order (single run)
+Normalize inputs; build excludeSet.
+Theme tokens ← AI (strict JSON).
+Theme containers ← dictionary filters (save).
+Pools by length ← dictionary (save).
+Grid model (slots, symmetry, rules).
+Solver:
+Seed theme domains from themeContainers.
+Seed others from poolsByLen.
+Run MRV/LCV + forward checking with fallback tiers.
+Clues ← AI (post-solve).
+Artifacts:
+foundation.json (meta, theme, pools summary, assignments)
+pools.json, theme_containers.json, clues.json, solver_stats.json
+Logs: choices, backtracks, when fillers unlocked, any unsatisfied constraints.
+
+9) Determinism switches
+Sort everything (tokens, containers, pools, slot ordering).
+Make candidate ordering stable (score → alpha).
+If you add any randomness, seed it and log the seed in solver_stats.json.
+
+10) Prompts (only two)
+A) Theme tokens (extract):
+Input (JSON body) with topic, hiddenThemePhrase, maxLettersPerToken, maxTokens, regex constraint.
+Output: { "hiddenWordsOrdered": ["KNOW","YOUR","STATUS"] }.
+
+B) Clue generation (post-solve):
+Input: { answer, topic, difficulty, constraints }
+Output: { "straight": "...", "educational": "...", "tricky": "..." }.
+(If you still want selection-only for special cases, keep the tiny prompt that picks one from a provided candidates array—strict JSON { "suggestion": "..." }.)
