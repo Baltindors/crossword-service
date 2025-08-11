@@ -73,6 +73,13 @@ async function main() {
   console.log("Anchor pairing pipeline starting…");
   await fs.mkdir("src/data", { recursive: true });
 
+  try {
+    await fs.rm("src/data/foundation.json", { force: true });
+  } catch (e) {
+    // ignore ENOENT; rethrow others if you want
+    if (e.code !== "ENOENT") throw e;
+  }
+
   const {
     topic,
     difficulty,

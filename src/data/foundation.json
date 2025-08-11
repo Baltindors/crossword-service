@@ -3,7 +3,7 @@
     "topic": "HIV Prevention",
     "difficulty": 5,
     "gridMaxLetters": 12,
-    "createdAt": "2025-08-10T22:12:07.063Z"
+    "createdAt": "2025-08-11T01:15:48.133Z"
   },
   "theme": {
     "phrase": "KNOW YOUR STATUS",
@@ -173,7 +173,7 @@
       },
       {
         "original": "CD4COUNT",
-        "suggestion": "EXPOSURE"
+        "suggestion": "OUTREACH"
       },
       {
         "original": "VIRALLOAD",
@@ -224,7 +224,7 @@
         ],
         [
           "CD4COUNT",
-          "EXPOSURE"
+          "OUTREACH"
         ]
       ],
       "finalWordList": [
@@ -245,7 +245,7 @@
         "ELISA",
         "VIRUS",
         "CD4COUNT",
-        "EXPOSURE"
+        "OUTREACH"
       ]
     }
   }
