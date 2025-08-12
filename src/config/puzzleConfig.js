@@ -5,7 +5,7 @@ export const puzzleConfig = {
   topic: "HIV Prevention",
 
   // difficulty level, 1 (easiest) through 7 (hardest)
-  difficulty: 5,
+  difficulty: 1,
 
   // the theme of the puzzle, used to generate the puzzle and hidden words
   theme: {

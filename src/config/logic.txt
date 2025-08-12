@@ -123,3 +123,109 @@ B) Clue generation (post-solve):
 Input: { answer, topic, difficulty, constraints }
 Output: { "straight": "...", "educational": "...", "tricky": "..." }.
 (If you still want selection-only for special cases, keep the tiny prompt that picks one from a provided candidates array—strict JSON { "suggestion": "..." }.)
+
+Folders and files
+/src/config/
+difficulty.js — Maps difficulty → knobs (target block count range, max word length, medical-first bias, backtrack limits, when to unlock “general” filler, etc.).
+rules.js — Universal rules (US-style, symmetry=180°, min entry length=3, token regex, allowed grid sizes).
+/src/data/ (generated)
+pools.json — Per-length candidate pools (medical/general tiers).
+theme_containers.json (optional) — Longer real words that contain each theme token.
+foundation.json — Run metadata + inputs + pool summaries.
+solver_stats.json — Steps, backtracks, timings, tier unlocks, seed used.
+grid_final.json — Final filled grid + numbering + entries.
+/src/dicts/
+wordlist-medical.txt (optional local lexicon)
+wordlist-general.txt (optional local fallback)
+/src/utils/
+normalize.js — Uppercasing, token regex, dedupe helpers.
+rng.js — Seeded RNG (for any randomized tie-breaks; default off for determinism).
+logger.js — Structured logs + step tracing.
+persist.js — Writers for artifacts, pretty-print helpers.
+/src/dictionary/
+indexes.js — Builds fast in-memory indexes:
+byLen[L] arrays (tiered: medical/general)
+posIndex[L][i][ch] -> Set(word) for O(1)-ish pattern intersects
+Optional “frequency/score” map for ranking.
+patternLookup.js — candidatesForPattern(L, fixedLetters, tierPolicy) using the indexes (and optional Datamuse/OneLook as a rare fallback).
+/src/theme/
+containers.js (optional) — Build/validate container candidates for each theme token from your pools/dicts.
+placement.js — Strategies to place theme containers in the grid (choose slots/coords that respect symmetry and leave fillable neighborhoods).
+/src/grid/
+grdModel.js — Grid data structure + symmetry helpers
+place letter / place block (and mirror)
+validate symmetry, no 2-letter slots, connectivity
+slots.js — Extracts Across/Down slots from the current grid; computes crossings.
+numbering.js — Assigns crossword numbers; builds acrossEntries/downEntries metadata.
+/src/solver/
+domains.js — Initializes and updates slot domains from pools + fixed letters; tier policy (medical-first, unlock general on demand).
+heuristics.js — MRV (smallest domain), tie-breakers (most crossings, longer first), LCV (least-constraining value scoring), candidate ordering (score → alpha).
+propagate.js — Forward checking: when a word is placed, prune intersecting slot domains; detect domain wipeouts.
+backtracker.js — Core CSP search:
+choose next slot (MRV)
+iterate ordered candidates (LCV)
+place → propagate → recurse; on failure, restore snapshot
+respects time/backtrack limits from difficulty
+layoutGenerator.js — Block layout strategies:
+Start from a seed (theme placements) and generate symmetric block patterns within target count
+Or dynamic “rescue” blocks: when repeated dead-ends, propose adding a symmetric block pair that doesn’t create 2-letter slots and stays within block budget
+planner.js — Orchestrates the whole run:
+load inputs (tokens, pools, difficulty)
+choose/validate theme containers
+generate or refine a symmetric layout
+extract slots, init domains
+run backtracker with tier policy
+if fail: adjust layout or widen tiers; retry with limits
+/src/qa/
+validateGrid.js — Final checks: all entries length≥3; every entry exists in dicts (or whitelisted proper names), fully checked letters, symmetry, block count in range.
+scoreGrid.js — Qulity scoring (theme integration, % medical, obscurity penalties, unchecked/unchecked = 0, long entries bonus, etc.).
+/src/clueing/
+cluePrompt.js — Your AI prompt builder for clues (straight/educational/tricky).
+clueWriter.js — Calls the model and attaches clues to numbered entries; difficulty mapping.
+/src/index.js
+The orchestrator you already have: builds pools/tokens, then calls planner.solve() and writes artifacts, then clueWriter.
+How it works (mechanics)
+Prep
+Normalize inputs; load difficulty knobs.
+Load pools (medical/general) and build indexes (byLen + posIndex).
+Theme placement
+If using containers: pick top N per token; for each candidate layout:
+place the container, mirror letters by symmetry rules
+reject layouts that create 2-letter slots or disconnect the grid
+Layout generation
+Either start with a template (precomputed symmetric masks by block count), or grow blocks dynamically:
+Keep block count in the difficulty’s target range
+Each block mirrors across center (180°)
+Every fillable cell should be checked by both an across and a down slot where possible
+Slot extraction & domain init
+Extract all slots (Across/Down), crossings metadata
+For each slot: build initial domain using patternLookup on the medical tier
+pattern = letters already fixed from crossings (if theme placed)
+if domain empty → immediate fail of this layout (or unlock general tier if policy allows)
+Search (CSP backtracking)
+Pick next slot with MRV
+Order slot’s candidates with LCV (simulate letter propagation to see how many options neighbors keep; cheaper approximation: sum of neighbor domain sizes after placement)
+Try each candidate:
+write letters to grid
+propagate constraints; if any neighbor domain → empty, backtrack
+recurse
+Stop when all slots assigned or you hit difficulty’s time/backtrack budget
+If repeated failures cluster in one region, optionally call layoutGenerator to add a symmetric block pair that breaks a stubborn long slot (only if within block budget), then restart domains
+Tier policy (medical → general)
+Start with medical tier only
+If a specific slot is starved (domain size < k) or overall backtracks exceed a threshold, merge general[L] into that slot’s domain (or globally for that length)
+Track how often/where you unlocked filler in solver_stats
+Finish & QA
+Validate grid (rules + dictionary coverage)
+Score grid (for your own ranking/selection if you tried multiple layouts)
+Number entries; save grid_final.json and solver_stats.json
+
+Cluing
+Buid across/down entry lists; call clue prompt per difficulty
+Save clues.json, attach to foundation
+Difficulty levers (examples)
+Block count: Easy 20–24; Medium 17–21; Hard 14–18 (12×12 tune)
+Max word length: Hard allows more 8–10s; Easy prefers 3–7
+Tier unlock: Easy unlock general early; Hard keep medical longer
+Backtrack cap: Easy higher cap + allow rescue blocks; Hard lower cap, fewer rescues
+LCV depth: Harder puzzles compute fuller LCV (more accurate; slower)

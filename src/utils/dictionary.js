@@ -43,7 +43,7 @@ export async function fetchOnelookByLength({ topic, length, max = 60 }) {
  * Build pools for multiple lengths at once.
  * Returns a Map<number, string[]> where key = length.
  */
-export async function buildCandidatePools({ topic, lengths, perLength = 20 }) {
+export async function buildCandidatePools({ topic, lengths, perLength = 50 }) {
   const uniq = Array.from(new Set(lengths)).sort((a, b) => a - b);
   const pools = new Map();
 
