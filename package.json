@@ -13,7 +13,10 @@
     "test:length": "node src/testOpenAI.js length",
     "test:filler": "node src/testOpenAI.js filler",
     "test:validate": "node src/testOpenAI.js validate",
-    "test:clues": "node src/testOpenAI.js clues"
+    "test:clues": "node src/testOpenAI.js clues",
+    "solve": "node src/run-solver.js",
+    "clues": "node src/run-clues.js",
+    "build:all": "npm run prepare && npm run solve && npm run clues"
   },
   "keywords": [],
   "author": "",

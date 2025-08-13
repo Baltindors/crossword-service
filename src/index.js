@@ -5,18 +5,12 @@ import OpenAI from "openai";
 
 import { GRID_MAX_LETTERS } from "./utils/constants.js";
 import { puzzleConfig } from "./config/puzzleConfig.js";
-import { buildCandidatePools } from "./utils/dictionary.js"; // <-- new length-aware pools
-import {
-  buildAnchors,
-  pairAnchorsWithConstraints,
-} from "./utils/topicPairing.js";
+import { buildCandidatePools } from "./utils/dictionary.js"; // returns Map<length, string[]>
 import {
   buildSystemPrompt,
   buildHiddenWordsPrompt,
-  buildSelectionPrompt, // returns { suggestion }
 } from "./ai/promptTemplates.js";
 
-const OK = /^[A-Z0-9_]+$/;
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 const up = (s) => String(s || "").toUpperCase();
@@ -60,139 +54,50 @@ async function getHiddenTokens({ topic, phrase }) {
   return upList(json.hiddenWordsOrdered);
 }
 
-function validateSuggestion(orig, sugg, excludeSet) {
-  if (!orig || !sugg) return false;
-  if (!OK.test(sugg)) return false;
-  if (sugg.length !== orig.length) return false;
-  if (excludeSet.has(sugg)) return false;
-  if (sugg === orig) return false;
-  return true;
-}
-
 async function main() {
-  console.log("Anchor pairing pipeline starting…");
+  console.log("Candidate-pool pipeline starting…");
   await fs.mkdir("src/data", { recursive: true });
 
-  try {
-    await fs.rm("src/data/foundation.json", { force: true });
-  } catch (e) {
-    // ignore ENOENT; rethrow others if you want
-    if (e.code !== "ENOENT") throw e;
-  }
+  // Hard reset last run’s artifacts
+  await fs.rm("src/data/foundation.json", { force: true }).catch(() => {});
+  await fs.rm("src/data/pools.json", { force: true }).catch(() => {});
 
-  const {
-    topic,
-    difficulty,
-    theme,
-    topicWords,
-    fixedPairs: fixedPairsFromCfg,
-  } = puzzleConfig;
+  const { topic, difficulty, theme, topicWords } = puzzleConfig;
 
   // 1) Theme tokens (AI)
   console.log("🔹 Fetching theme tokens…");
   const hiddenTokens = await getHiddenTokens({ topic, phrase: theme.phrase });
   console.log("   → hiddenTokens:", hiddenTokens);
 
-  // 2) Build typed anchors (theme first)
-  const anchors = buildAnchors(hiddenTokens, topicWords);
-
-  // 3) Optional fixedPairs from config (uppercased)
-  const fixedPairs = (fixedPairsFromCfg ?? []).map(([a, b]) => [up(a), up(b)]);
-
-  // 4) Local deterministic pairing (theme↔topic, then topic↔topic; never theme↔theme)
-  const pairing = pairAnchorsWithConstraints(anchors, fixedPairs);
+  // 2) Build pools for ALL slot lengths we might see in a 12×12: 3..GRID_MAX_LETTERS
+  const allLengths = Array.from(
+    { length: GRID_MAX_LETTERS - 3 + 1 },
+    (_, i) => i + 3
+  );
   console.log(
-    `   → paired ${pairing.counts.paired} anchors, ${pairing.counts.unpaired} still need partners`
+    `🔹 Building candidate pools for lengths: ${allLengths.join(", ")}`
   );
 
-  // 5) Build OneLook candidate pools by needed lengths (to keep prompts small + accurate)
-  const neededLengths = [
-    ...new Set(pairing.anchorsNeedingPartners.map((a) => a.length)),
-  ].sort((a, b) => a - b);
-  const pools = await buildCandidatePools({
+  // 3) Build OneLook candidate pools (up to 30 per length)
+  const poolsMap = await buildCandidatePools({
     topic,
-    lengths: neededLengths,
-    perLength: 20, // adjust 10–30 as you like
+    lengths: allLengths,
+    perLength: 50, // tweak as needed
   });
 
-  // 6) AI selection pass, deterministic order of anchors: (len ASC, word ASC)
-  const excludeSet = new Set(pairing.excludeWords);
-  const aiPartners = [];
-
-  const anchorsNeedingPartnersSorted = [...pairing.anchorsNeedingPartners].sort(
-    (a, b) => {
-      if (a.length !== b.length) return a.length - b.length;
-      return a.word.localeCompare(b.word);
-    }
-  );
-
-  for (const anchor of anchorsNeedingPartnersSorted) {
-    const original = up(anchor.word);
-    const pool = (pools.get(anchor.length) || []).filter(
-      (w) => w !== original && !excludeSet.has(w)
-    );
-
-    // Cap prompt size but keep top-scored words (pools already sorted by score)
-    const candidates = pool.slice(0, 15);
-
-    try {
-      if (candidates.length > 0) {
-        const system = buildSystemPrompt();
-        const user = buildSelectionPrompt({
-          topic,
-          anchor,
-          candidates,
-          excludeWords: Array.from(excludeSet),
-        });
-        const out = await callJSON(system, user);
-        const suggestion = up(out?.suggestion ?? "");
-
-        if (validateSuggestion(original, suggestion, excludeSet)) {
-          aiPartners.push({ original, suggestion });
-          excludeSet.add(suggestion);
-        } else {
-          console.warn(`⚠️ Rejected AI pick for ${original}: "${suggestion}"`);
-          // Optional deterministic fallback: first unused candidate
-          const fallback = candidates.find((c) =>
-            validateSuggestion(original, c, excludeSet)
-          );
-          if (fallback) {
-            aiPartners.push({ original, suggestion: fallback });
-            excludeSet.add(fallback);
-            console.warn(`   ↳ Used fallback candidate: "${fallback}"`);
-          }
-        }
-      } else {
-        console.warn(
-          `⚠️ No candidates for ${original} (len=${anchor.length}). Skipping.`
-        );
-      }
-    } catch (err) {
-      console.error(`❌ AI selection failed for ${original}`, err);
-      // Optional deterministic fallback on error
-      const fallback = candidates.find((c) =>
-        validateSuggestion(original, c, excludeSet)
-      );
-      if (fallback) {
-        aiPartners.push({ original, suggestion: fallback });
-        excludeSet.add(fallback);
-        console.warn(`   ↳ Used fallback candidate after error: "${fallback}"`);
-      }
-    }
+  // Ensure determinism: dedupe + sort alpha
+  for (const [L, arr] of poolsMap.entries()) {
+    poolsMap.set(L, [...new Set(arr.map(up))].sort());
   }
 
-  // 7) Merge to final pairs
-  const partnersMap = new Map(
-    aiPartners.map((p) => [p.original, p.suggestion])
+  // 4) Serialize pools to a plain object for saving
+  const poolsObj = Object.fromEntries(
+    [...poolsMap.entries()]
+      .sort(([a], [b]) => Number(a) - Number(b))
+      .map(([L, arr]) => [String(L), arr])
   );
-  const pairsFinal = [...pairing.pairs];
-  for (const a of pairing.anchorsNeedingPartners) {
-    const partner = partnersMap.get(up(a.word));
-    if (partner) pairsFinal.push([up(a.word), partner]);
-  }
-  const finalWordList = Array.from(new Set(pairsFinal.flat()));
 
-  // 8) Build foundation object
+  // 5) Build foundation artifact (solver-friendly, no pre-pairing)
   const foundation = {
     meta: {
       topic,
@@ -206,24 +111,24 @@ async function main() {
       hiddenTokens,
     },
     topic: { words: upList(topicWords) },
-    pairing: {
-      mode: "anchor+local+onelook",
-      counts: pairing.counts,
-      anchors,
-      fixedPairs,
-      local: pairing,
-      aiPartners,
-      final: { pairsFinal, finalWordList },
+    candidates: {
+      mode: "byLength-onelook",
+      lengths: allLengths,
+      perLength: 30,
+      summary: Object.fromEntries(
+        Object.entries(poolsObj).map(([L, arr]) => [L, arr.length])
+      ),
     },
   };
 
-  // 9) Save to file
-  console.log("📄 Final JSON:\n", JSON.stringify(foundation, null, 2));
+  // 6) Save artifacts
   await fs.writeFile(
     "src/data/foundation.json",
     JSON.stringify(foundation, null, 2)
   );
-  console.log("💾 Wrote src/data/foundation.json");
+  await fs.writeFile("src/data/pools.json", JSON.stringify(poolsObj, null, 2));
+
+  console.log("📄 foundation.json and pools.json written to src/data/");
   console.log("🏁 Done.");
 }
 
