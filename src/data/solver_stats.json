@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "reason": "timeout",
+  "details": {
+    "assignedCount": 0
+  },
+  "stats": {
+    "level": 1,
+    "steps": 1517501,
+    "backtracks": 0,
+    "maxDepth": 0,
+    "durationMs": 60001,
+    "starvedAtInit": []
+  },
+  "writtenAt": "2025-08-11T23:27:36.718Z"
+}
