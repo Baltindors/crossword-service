@@ -16,7 +16,9 @@
     "test:clues": "node src/testOpenAI.js clues",
     "solve": "node src/run-solver.js",
     "clues": "node src/run-clues.js",
-    "build:all": "npm run prepare && npm run solve && npm run clues"
+    "build:all": "npm run prepare && npm run solve && npm run clues",
+    "pools:add": "node src/tools/pools-add-file.js"
+
   },
   "keywords": [],
   "author": "",
