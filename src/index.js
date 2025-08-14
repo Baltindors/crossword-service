@@ -58,9 +58,12 @@ async function main() {
   console.log("Candidate-pool pipeline starting…");
   await fs.mkdir("src/data", { recursive: true });
 
-  // Hard reset last run’s artifacts
-  await fs.rm("src/data/foundation.json", { force: true }).catch(() => {});
-  await fs.rm("src/data/pools.json", { force: true }).catch(() => {});
+  +(
+    // Reset foundation only; DO NOT delete pools.json (append-only design)
+    (+(await fs
+      .rm("src/data/foundation.json", { force: true })
+      .catch(() => {})))
+  );
 
   const { topic, difficulty, theme, topicWords } = puzzleConfig;
 
@@ -121,12 +124,13 @@ async function main() {
     },
   };
 
-  // 6) Save artifacts
-  await fs.writeFile(
-    "src/data/foundation.json",
-    JSON.stringify(foundation, null, 2)
+  +(
+    // 6) Save artifacts (pools are persisted by dictionary.js; we only write foundation)
+    (await fs.writeFile(
+      "src/data/foundation.json",
+      JSON.stringify(foundation, null, 2)
+    ))
   );
-  await fs.writeFile("src/data/pools.json", JSON.stringify(poolsObj, null, 2));
 
   console.log("📄 foundation.json and pools.json written to src/data/");
   console.log("🏁 Done.");
