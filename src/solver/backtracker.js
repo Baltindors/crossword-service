@@ -6,6 +6,15 @@ import { initDomains } from "./domains.js";
 import { selectNextSlot, orderCandidatesLCV } from "./heuristics.js";
 import { tryPlaceAndPropagate, undoPlacement } from "./propagate.js";
 
+// small local shuffle (used only if cfg.shuffleCandidates)
+function shuffle(a) {
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = (Math.random() * (i + 1)) | 0;
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
 /**
  * Solve a given grid layout (blocks already placed) using pools/indexes.
  *
@@ -14,8 +23,8 @@ import { tryPlaceAndPropagate, undoPlacement } from "./propagate.js";
  *  - indexes: from dictionary/indexes.buildTieredIndexes()
  *  - difficulty: 1..7 (maps to search policy via config)
  *  - enforceUniqueAnswers?: boolean (default true)
- *  - usedWords?: Set<string>  // optional seed of pre-placed answers
- *  - logs?: boolean           // basic progress logs
+ *  - usedWords?: Set<string>
+ *  - logs?: boolean
  *
  * @returns {
  *   ok: boolean,
@@ -67,6 +76,25 @@ export async function solveWithBacktracking({
       unlockGeneralAt: cfg.unlockGeneralAt,
     },
   });
+
+  // --- DEBUG: show initial domain sizes (helps diagnose “only one word places”) ---
+  if (logs) {
+    const summary = [];
+    for (const s of slots) {
+      const d = domains.get(s.id) || [];
+      summary.push({
+        id: s.id,
+        len: s.length,
+        dir: s.dir || (s.orientation ?? "?"),
+        domain: d.length,
+      });
+    }
+    summary.sort((a, b) => a.domain - b.domain || b.len - a.len);
+    console.log("[solve][init] slots:", summary);
+    if (starved?.length) {
+      console.log("[solve][init] starvedAtInit (tier unlock needed):", starved);
+    }
+  }
 
   // quick unsat check: any empty domain?
   const empties = [];
@@ -121,6 +149,7 @@ export async function solveWithBacktracking({
     for (const [id, d] of domains.entries()) {
       if (!assigned.has(id) && d.length === 0) {
         dead = true;
+        if (logs) console.log("[solve] dead domain at slot:", id);
         break;
       }
     }
@@ -165,10 +194,21 @@ export async function solveWithBacktracking({
         lcvDepth: cfg.lcvDepth,
       });
 
+      // Optional light randomization to avoid the same first word each run
+      const candidateList = cfg.shuffleCandidates
+        ? shuffle([...ordered])
+        : ordered;
+
+      if (logs) {
+        console.log(
+          `[solve][mrv] pick slot=${nextSlot.id} len=${nextSlot.length} domain=${cand.length}`
+        );
+      }
+
       frame = {
         slotId: nextSlot.id,
         slot: nextSlot,
-        ordered,
+        ordered: candidateList,
         idx: -1,
         record: null,
         exhausted: false,
@@ -215,6 +255,14 @@ export async function solveWithBacktracking({
     });
 
     if (!attempt.ok) {
+      if (logs) {
+        // attempt.reason may be undefined; best-effort logging
+        console.log(
+          `[solve][reject] slot=${frame.slotId} word=${word} reason=${
+            attempt.reason || "conflict"
+          }`
+        );
+      }
       // try next candidate
       continue;
     }
@@ -225,9 +273,11 @@ export async function solveWithBacktracking({
     assignments.set(frame.slotId, word);
     stats.maxDepth = Math.max(stats.maxDepth, frames.length);
 
-    if (logs && assigned.size % 10 === 0) {
-      // lightweight progress log
-      console.log(`[solve] placed ${assigned.size}/${domains.size} …`);
+    if (logs && (assigned.size % 10 === 0 || assigned.size === 1)) {
+      // lightweight progress log; also log after the very first placement
+      console.log(
+        `[solve] placed ${assigned.size}/${domains.size} (last=${frame.slotId}="${word}")`
+      );
     }
   }
 
@@ -249,8 +299,15 @@ export async function solveWithBacktracking({
       assigned.delete(top.slotId);
       assignments.delete(top.slotId);
       stats.backtracks += 1;
+
+      if (logs) {
+        console.log(
+          `[solve][backtrack] slot=${top.slotId} tried=${top.idx}/${top.ordered.length}`
+        );
+      }
     }
-    return frames.length >= 0;
+    // Return whether there is still a frame to continue from (true allows the loop to keep going)
+    return frames.length > 0;
   }
 }
 

@@ -7,7 +7,7 @@ import {
   addRescueBlockPair,
 } from "./layoutGenerator.js";
 import { solveWithBacktracking } from "./backtracker.js";
-import { toStrings } from "../grid/gridModel.js";
+import { toStrings, computeSlots } from "../grid/gridModel.js";
 
 const DATA_DIR = "src/data";
 const POOLS_PATH = `${DATA_DIR}/pools.json`;
@@ -52,6 +52,18 @@ export async function planAndSolve({
     logs,
   });
 
+  // --- DEBUG: layout snapshot before solving ---
+  if (logs) {
+    const slots = computeSlots(grid);
+    const blockCount = grid.flat().filter((c) => c.block).length;
+    console.log("[planner] layout generated", {
+      size,
+      blockBudget: cfg.blockBudget,
+      blocks: blockCount,
+      slots: slots.length,
+    });
+  }
+
   // 5) Try solve; optionally perform a few rescue attempts
   let result = await solveWithBacktracking({
     grid,
@@ -66,17 +78,31 @@ export async function planAndSolve({
       console.log(
         `[planner] initial attempt failed (${result.reason}). Trying rescue blocks…`
       );
+
     for (let i = 0; i < maxRescues; i++) {
+      // Add a symmetric rescue pair
       const res = addRescueBlockPair(grid, { reserved: new Set() });
       if (!res.ok) {
         if (logs)
           console.log(`[planner] rescue #${i + 1} failed: ${res.reason}`);
         break;
       }
-      if (logs)
+
+      if (logs) {
         console.log(
           `[planner] added rescue pair at r=${res.pos.r}, c=${res.pos.c}`
         );
+        // Recompute slot topology for visibility (solver recomputes internally per call)
+        const slotsNow = computeSlots(grid).length;
+        const blocksNow = grid.flat().filter((c) => c.block).length;
+        console.log("[planner] after rescue", {
+          attempt: i + 1,
+          slots: slotsNow,
+          blocks: blocksNow,
+        });
+      }
+
+      // Retry solving on the mutated grid
       result = await solveWithBacktracking({
         grid,
         indexes,
@@ -84,6 +110,7 @@ export async function planAndSolve({
         enforceUniqueAnswers: true,
         logs,
       });
+
       if (result.ok) break;
     }
   }
