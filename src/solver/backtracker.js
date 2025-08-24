@@ -1,10 +1,10 @@
 // src/solver/backtracker.js
 import { getDifficultyConfig } from "../config/difficulty.js";
-import { RULES } from "../config/rules.js";
 import { buildSlots } from "../grid/slots.js";
 import { initDomains } from "./domains.js";
 import { selectNextSlot, orderCandidatesLCV } from "./heuristics.js";
 import { tryPlaceAndPropagate, undoPlacement } from "./propagate.js";
+import { OneLookHydrator } from "./hydrator.js";
 
 // small local shuffle (used only if cfg.shuffleCandidates)
 function shuffle(a) {
@@ -25,23 +25,6 @@ function shuffle(a) {
  *  - enforceUniqueAnswers?: boolean (default true)
  *  - usedWords?: Set<string>
  *  - logs?: boolean
- *
- * @returns {
- *   ok: boolean,
- *   assignments?: Map<slotId,string>,
- *   grid?: char[][],
- *   stats: {
- *     level: number,
- *     steps: number,
- *     backtracks: number,
- *     maxDepth: number,
- *     durationMs: number,
- *     starvedAtInit: string[],
- *     seed?: number
- *   },
- *   reason?: string,
- *   details?: any
- * }
  */
 export async function solveWithBacktracking({
   grid,
@@ -77,7 +60,7 @@ export async function solveWithBacktracking({
     },
   });
 
-  // --- DEBUG: show initial domain sizes (helps diagnose “only one word places”) ---
+  // Optional debug: initial domain sizes
   if (logs) {
     const summary = [];
     for (const s of slots) {
@@ -91,24 +74,21 @@ export async function solveWithBacktracking({
     }
     summary.sort((a, b) => a.domain - b.domain || b.len - a.len);
     console.log("[solve][init] slots:", summary);
-    if (starved?.length) {
+    if (starved?.length)
       console.log("[solve][init] starvedAtInit (tier unlock needed):", starved);
-    }
   }
 
-  // quick unsat check: any empty domain?
+  // quick unsat check
   const empties = [];
-  for (const [id, d] of domains.entries()) {
-    if (d.length === 0) empties.push(id);
-  }
+  for (const [id, d] of domains.entries()) if (d.length === 0) empties.push(id);
   if (empties.length) {
     return fail("unsatisfiable_initial_domains", { empties, starved }, t0, cfg);
   }
 
-  // 3) Iterative DFS with an explicit frame stack
+  // 3) Prepare search & helpers
   const assigned = new Set(); // slotIds placed
   const assignments = new Map(); // slotId -> word
-  const frames = []; // search stack
+  const frames = []; // explicit DFS stack
   const stats = {
     level: cfg.level,
     steps: 0,
@@ -117,9 +97,17 @@ export async function solveWithBacktracking({
     starvedAtInit: starved,
   };
 
-  // main loop
+  // OneLook hydrator (caches + nogood patterns)
+  const hydrator = new OneLookHydrator({
+    onelookMax: cfg.onelookMax,
+    hydrateIfBelow: cfg.hydrateIfBelow,
+    usedWords,
+    logs,
+  });
+
+  // ---------- main loop ----------
   while (true) {
-    // time/backtrack caps
+    // caps
     if (Date.now() - t0 > cfg.timeoutMs) {
       return fail("timeout", { assignedCount: assigned.size }, t0, cfg, stats);
     }
@@ -136,39 +124,39 @@ export async function solveWithBacktracking({
     // solved?
     if (assigned.size === domains.size) {
       const durationMs = Date.now() - t0;
-      return {
-        ok: true,
-        assignments,
-        grid,
-        stats: { ...stats, durationMs },
-      };
+      return { ok: true, assignments, grid, stats: { ...stats, durationMs } };
     }
 
-    // detect any unassigned slot with empty domain -> immediate backtrack
+    // rescue empty domains (try OneLook once with force)
     let dead = false;
     for (const [id, d] of domains.entries()) {
       if (!assigned.has(id) && d.length === 0) {
-        dead = true;
-        if (logs) console.log("[solve] dead domain at slot:", id);
-        break;
+        const s = slotsById.get(id);
+        const rescued = await hydrator.hydrateSlot(domains, grid, s, {
+          force: true,
+        });
+        const now = domains.get(id) || [];
+        if (!rescued || now.length === 0) {
+          dead = true;
+          if (logs) console.log("[solve] dead domain at slot:", id);
+          break;
+        }
       }
     }
     if (dead) {
-      if (!(await backtrackOnce())) {
+      if (!(await backtrackOnce()))
         return fail("dead_end_no_more_choices", null, t0, cfg, stats);
-      }
       continue;
     }
 
-    // If no current frame (or last frame exhausted), choose a new MRV slot
+    // prepare or advance a frame
     let frame = frames[frames.length - 1];
-    if (!frame || frame.exhausted) {
+    if (!frame || frame.exhausted || frame.record) {
       const nextSlot = selectNextSlot(domains, slotsById, {
         tieBreak: cfg.tieBreak,
         exclude: assigned,
       });
       if (!nextSlot) {
-        // no selectable slot found; either solved or stuck
         if (!(await backtrackOnce())) {
           return fail(
             "no_selectable_slot",
@@ -181,7 +169,12 @@ export async function solveWithBacktracking({
         continue;
       }
 
-      // Order candidates with LCV
+      // hydrate small domains before ordering candidates
+      const curDomain = domains.get(nextSlot.id) || [];
+      if (hydrator.shouldHydrate(curDomain.length)) {
+        await hydrator.hydrateSlot(domains, grid, nextSlot);
+      }
+
       const cand = domains.get(nextSlot.id) || [];
       const ordered = orderCandidatesLCV({
         grid,
@@ -194,7 +187,6 @@ export async function solveWithBacktracking({
         lcvDepth: cfg.lcvDepth,
       });
 
-      // Optional light randomization to avoid the same first word each run
       const candidateList = cfg.shuffleCandidates
         ? shuffle([...ordered])
         : ordered;
@@ -216,11 +208,15 @@ export async function solveWithBacktracking({
       frames.push(frame);
     }
 
-    // Try next candidate in the current frame
+    // already placed? continue to next frame
+    if (frame.record) continue;
+
+    // try next candidate
     frame.idx += 1;
 
-    // Exhausted? backtrack
+    // exhausted all candidates -> mark nogood pattern & backtrack
     if (frame.idx >= frame.ordered.length) {
+      if (!frame.record) hydrator.markNogood(frame.slot, grid);
       frame.exhausted = true;
       if (!(await backtrackOnce())) {
         return fail(
@@ -234,7 +230,7 @@ export async function solveWithBacktracking({
       continue;
     }
 
-    // Attempt placement
+    // attempt placement
     const word = frame.ordered[frame.idx];
     stats.steps += 1;
 
@@ -256,25 +252,22 @@ export async function solveWithBacktracking({
 
     if (!attempt.ok) {
       if (logs) {
-        // attempt.reason may be undefined; best-effort logging
         console.log(
           `[solve][reject] slot=${frame.slotId} word=${word} reason=${
             attempt.reason || "conflict"
           }`
         );
       }
-      // try next candidate
-      continue;
+      continue; // try next candidate
     }
 
-    // success on this word -> commit to frame and proceed deeper
+    // success -> commit & go deeper
     frame.record = attempt.record;
     assigned.add(frame.slotId);
     assignments.set(frame.slotId, word);
     stats.maxDepth = Math.max(stats.maxDepth, frames.length);
 
     if (logs && (assigned.size % 10 === 0 || assigned.size === 1)) {
-      // lightweight progress log; also log after the very first placement
       console.log(
         `[solve] placed ${assigned.size}/${domains.size} (last=${frame.slotId}="${word}")`
       );
@@ -282,13 +275,11 @@ export async function solveWithBacktracking({
   }
 
   // ---------- helpers ----------
-
   async function backtrackOnce() {
     const top = frames.pop();
     if (!top) return false;
 
     if (top.record) {
-      // undo placement
       undoPlacement({
         grid,
         record: top.record,
@@ -306,7 +297,6 @@ export async function solveWithBacktracking({
         );
       }
     }
-    // Return whether there is still a frame to continue from (true allows the loop to keep going)
     return frames.length > 0;
   }
 }

@@ -1,89 +1,95 @@
 // src/config/difficulty.js
-// Base defaults (used if a field isn’t specified for a level)
+
+// Base defaults (applied to every level, then overridden per-level)
 const BASE = {
   // Block/layout policy
-  blockBudget: { min: 17, max: 21 }, // 12×12 typical; tweak per level below
-  allowRescueBlocks: true, // permit adding symmetric block pairs mid-solve
+  blockBudget: { min: 26, max: 32 }, // sensible default for ~12×12
+  allowRescueBlocks: true,
   maxRescuePairs: 2,
 
   // Domain tier policy
   medicalFirst: true,
-  // when to unlock "general" filler
   unlockGeneralAt: {
-    slotDomainLt: 3, // if a slot’s domain < 3
-    globalBacktracks: 2000, // or overall backtracks exceed this
+    // Keep this constant so behavior is predictable across levels
+    slotDomainLt: 3,
+    globalBacktracks: 5000,
   },
 
-  // Search limits
-  timeoutMs: 45000, // hard cap per attempt
-  maxBacktracks: 35000,
+  // Search limits — keep constant across difficulties for clarity
+  timeoutMs: 60000,
+  maxBacktracks: 50000,
 
   // Heuristics
-  useMRV: true, // Minimum Remaining Values
-  lcvDepth: 1, // Least-Constraining Value lookahead depth (0/1/2)
+  useMRV: true,
+  lcvDepth: 1, // per-level tweaks below
   tieBreak: ["crossingsDesc", "lenDesc", "alphaAsc"],
 
-  // Candidate ordering weights (score -> alpha tiebreak)
+  // Candidate ordering
+  shuffleCandidates: true, // keep consistent; difficulty is not randomness
+
+  // Candidate ordering weights
   weights: {
-    medicalTier: 2.0, // prefer medical terms
-    poolScore: 1.0, // provider/frequency score if you have it
-    frequency: 0.5, // if you add word freq later
-    obscurityPenalty: -0.5, // penalize rare/odd proper nouns
+    medicalTier: 2.0,
+    poolScore: 1.0,
+    frequency: 0.5,
+    obscurityPenalty: -0.5,
   },
 
+  // Hydration knobs — ON for all levels
+  onelookMax: 200, // results per OneLook call
+  hydrateIfBelow: 12, // hydrate small domains under this size
+
   // Quality gates
-  minMedicalPct: 0.6, // target % of medical entries
+  minMedicalPct: 0.6,
 };
 
 // Per-level overrides (1 easiest … 7 hardest)
+// Keep differences minimal & intuitive:
+// - Easier -> more blocks allowed, shallower lookahead (LCV depth 0/1)
+// - Harder -> fewer blocks allowed, deeper lookahead (LCV depth 2)
+// Hydration, timeouts, and backtrack caps remain constant.
 const LEVELS = {
   1: {
     name: "easy",
-    blockBudget: { min: 20, max: 24 },
-    unlockGeneralAt: { slotDomainLt: 5, globalBacktracks: 1000 },
-    maxBacktracks: 50000,
-    timeoutMs: 60000,
-    lcvDepth: 0, // cheaper, faster
+    blockBudget: { min: 30, max: 34 },
+    lcvDepth: 0,
+  },
+  2: {
+    name: "easy+",
+    blockBudget: { min: 30, max: 34 },
+    lcvDepth: 0,
   },
   3: {
     name: "medium",
-    blockBudget: { min: 18, max: 22 },
-    unlockGeneralAt: { slotDomainLt: 3, globalBacktracks: 3000 },
-    maxBacktracks: 35000,
-    timeoutMs: 50000,
+    blockBudget: { min: 28, max: 32 },
+    lcvDepth: 1,
+  },
+  4: {
+    name: "medium+",
+    blockBudget: { min: 28, max: 32 },
     lcvDepth: 1,
   },
   5: {
     name: "hard",
-    blockBudget: { min: 16, max: 20 },
-    unlockGeneralAt: { slotDomainLt: 2, globalBacktracks: 6000 },
-    maxBacktracks: 25000,
-    timeoutMs: 45000,
+    blockBudget: { min: 26, max: 30 },
     lcvDepth: 2,
-    allowRescueBlocks: true, // keep shape stricter
-    maxRescuePairs: 2,
+  },
+  6: {
+    name: "hard+",
+    blockBudget: { min: 26, max: 30 },
+    lcvDepth: 2,
   },
   7: {
     name: "expert",
-    blockBudget: { min: 14, max: 18 },
-    unlockGeneralAt: { slotDomainLt: 1, globalBacktracks: 9000 },
-    maxBacktracks: 18000,
-    timeoutMs: 40000,
+    blockBudget: { min: 24, max: 28 },
     lcvDepth: 2,
-    allowRescueBlocks: false,
-    minMedicalPct: 0.75,
+    allowRescueBlocks: false, // keep shape stricter at expert
+    minMedicalPct: 0.7,
   },
 };
 
-// Resolve a level (merge BASE + nearest level below)
+// Resolve a level (merge BASE + that level only)
 export function getDifficultyConfig(level = 3) {
-  // find the highest defined level <= requested
-  const keys = Object.keys(LEVELS)
-    .map(Number)
-    .sort((a, b) => a - b);
-  let chosen = {};
-  for (const k of keys) {
-    if (level >= k) chosen = { ...chosen, ...LEVELS[k] };
-  }
-  return { ...BASE, ...chosen, level };
+  const lvl = LEVELS[level] || LEVELS[3];
+  return { ...BASE, ...lvl, level };
 }

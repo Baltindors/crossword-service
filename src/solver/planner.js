@@ -8,6 +8,7 @@ import {
 } from "./layoutGenerator.js";
 import { solveWithBacktracking } from "./backtracker.js";
 import { toStrings, computeSlots } from "../grid/gridModel.js";
+import { RULES } from "../config/rules.js";
 
 const DATA_DIR = "src/data";
 const POOLS_PATH = `${DATA_DIR}/pools.json`;
@@ -36,7 +37,7 @@ export async function planAndSolve({
   const pools = await loadPools(POOLS_PATH);
 
   // 2) Build indexes (byLen + positional)
-  const indexes = buildTieredIndexes(pools);
+  const indexes = buildTieredIndexes(pools, { logs });
 
   // 3) Difficulty knobs
   const cfg = getDifficultyConfig(difficulty);
@@ -55,7 +56,9 @@ export async function planAndSolve({
   // --- DEBUG: layout snapshot before solving ---
   if (logs) {
     const slots = computeSlots(grid);
-    const blockCount = grid.flat().filter((c) => c.block).length;
+    const blockCount = grid
+      .flat()
+      .filter((ch) => ch === RULES.blockChar).length;
     console.log("[planner] layout generated", {
       size,
       blockBudget: cfg.blockBudget,

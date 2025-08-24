@@ -281,3 +281,47 @@ export function getDownRuns(grid) {
   }
   return runs;
 }
+
+/* ---------------------------------------------
+ * NEW: computeSlots(grid)
+ * For planner/debugging: convert runs into slot objects with cell coords.
+ * This does NOT need to match the solver’s internal IDs; it’s used for logs.
+ * --------------------------------------------- */
+export function computeSlots(grid) {
+  const slots = [];
+  const minLen = Math.max(2, RULES.minEntryLen);
+
+  // Across -> id: A_r_c
+  for (const run of getAcrossRuns(grid)) {
+    if (run.length >= minLen) {
+      const cells = [];
+      for (let i = 0; i < run.length; i++) {
+        cells.push({ r: run.row, c: run.colStart + i });
+      }
+      slots.push({
+        id: `A_${run.row}_${run.colStart}`,
+        dir: "A",
+        length: run.length,
+        cells,
+      });
+    }
+  }
+
+  // Down -> id: D_r_c  (r is rowStart)
+  for (const run of getDownRuns(grid)) {
+    if (run.length >= minLen) {
+      const cells = [];
+      for (let i = 0; i < run.length; i++) {
+        cells.push({ r: run.rowStart + i, c: run.col });
+      }
+      slots.push({
+        id: `D_${run.rowStart}_${run.col}`,
+        dir: "D",
+        length: run.length,
+        cells,
+      });
+    }
+  }
+
+  return slots;
+}

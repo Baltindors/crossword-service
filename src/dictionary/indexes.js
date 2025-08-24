@@ -27,7 +27,13 @@ import { RULES, normalizeToken } from "../config/rules.js";
 
 // ---------- Build indexes ----------
 
-export function buildTieredIndexes(pools) {
+/**
+ * Build word indexes for all tiers.
+ * @param {object|Map} pools
+ * @param {object} [opts]
+ * @param {boolean} [opts.logs=false]  // when true, logs coverage by length per tier
+ */
+export function buildTieredIndexes(pools, { logs = false } = {}) {
   const { medicalByLen, generalByLen } = coercePoolsToTiered(pools);
 
   // determinism: sort alpha + dedupe
@@ -42,6 +48,12 @@ export function buildTieredIndexes(pools) {
     const a = byLen.medical.get(L) || [];
     const b = byLen.general.get(L) || [];
     byLen.both.set(L, dedupeAlpha([...a, ...b]));
+  }
+
+  if (logs) {
+    logCoverageByLength({ label: "medical", map: byLen.medical });
+    logCoverageByLength({ label: "general", map: byLen.general });
+    logCoverageByLength({ label: "both   ", map: byLen.both });
   }
 
   // position indexes
@@ -140,6 +152,16 @@ function buildPosIndex(byLenMap) {
     pos.set(L, arr);
   }
   return pos;
+}
+
+function logCoverageByLength({ label, map }) {
+  const counts = {};
+  for (const [L, arr] of map.entries()) counts[L] = arr.length;
+  // compact ascending-by-length log (e.g., {3: 152, 4: 819, 5: 1211, ...})
+  const ordered = Object.fromEntries(
+    Object.entries(counts).sort((a, b) => Number(a[0]) - Number(b[0]))
+  );
+  console.log(`[dict] pool sizes by length (${label}):`, ordered);
 }
 
 // ---------- Query: pattern → candidates ----------
