@@ -1,17 +1,17 @@
 {
   "meta": {
     "topic": "HIV Prevention",
-    "difficulty": 5,
+    "difficulty": 1,
     "gridMaxLetters": 12,
-    "createdAt": "2025-08-11T01:15:48.133Z"
+    "createdAt": "2025-08-24T02:37:50.483Z"
   },
   "theme": {
-    "phrase": "KNOW YOUR STATUS",
-    "instructions": "Weave the hidden motif 'KNOW YOUR STATUS' into three spans each span should appear as part of a longer entry",
+    "phrase": "CARE FOR OTHERS",
+    "instructions": "Weave the hidden motif 'CARE FOR OTHERS' into three spans each span should appear as part of a longer entry",
     "hiddenTokens": [
-      "KNOW",
-      "YOUR",
-      "STATUS"
+      "CARE",
+      "FOR",
+      "OTHERS"
     ]
   },
   "topic": {
@@ -25,228 +25,32 @@
       "DESCOVY"
     ]
   },
-  "pairing": {
-    "mode": "anchor+local+onelook",
-    "counts": {
-      "anchors": 10,
-      "paired": 2,
-      "unpaired": 8
-    },
-    "anchors": [
-      {
-        "word": "KNOW",
-        "length": 4,
-        "type": "theme"
-      },
-      {
-        "word": "YOUR",
-        "length": 4,
-        "type": "theme"
-      },
-      {
-        "word": "STATUS",
-        "length": 6,
-        "type": "theme"
-      },
-      {
-        "word": "ANTIBODIES",
-        "length": 10,
-        "type": "topic"
-      },
-      {
-        "word": "PROPHYLAXIS",
-        "length": 11,
-        "type": "topic"
-      },
-      {
-        "word": "VIRALLOAD",
-        "length": 9,
-        "type": "topic"
-      },
-      {
-        "word": "ELISA",
-        "length": 5,
-        "type": "topic"
-      },
-      {
-        "word": "CD4COUNT",
-        "length": 8,
-        "type": "topic"
-      },
-      {
-        "word": "TRUVADA",
-        "length": 7,
-        "type": "topic"
-      },
-      {
-        "word": "DESCOVY",
-        "length": 7,
-        "type": "topic"
-      }
+  "candidates": {
+    "mode": "byLength-onelook",
+    "lengths": [
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12
     ],
-    "fixedPairs": [],
-    "local": {
-      "pairs": [
-        [
-          "TRUVADA",
-          "DESCOVY"
-        ]
-      ],
-      "unpaired": [
-        "KNOW",
-        "YOUR",
-        "STATUS",
-        "ANTIBODIES",
-        "PROPHYLAXIS",
-        "VIRALLOAD",
-        "ELISA",
-        "CD4COUNT"
-      ],
-      "excludeWords": [
-        "KNOW",
-        "YOUR",
-        "STATUS",
-        "ANTIBODIES",
-        "PROPHYLAXIS",
-        "VIRALLOAD",
-        "ELISA",
-        "CD4COUNT",
-        "TRUVADA",
-        "DESCOVY"
-      ],
-      "anchorsNeedingPartners": [
-        {
-          "word": "KNOW",
-          "length": 4
-        },
-        {
-          "word": "YOUR",
-          "length": 4
-        },
-        {
-          "word": "STATUS",
-          "length": 6
-        },
-        {
-          "word": "ANTIBODIES",
-          "length": 10
-        },
-        {
-          "word": "PROPHYLAXIS",
-          "length": 11
-        },
-        {
-          "word": "VIRALLOAD",
-          "length": 9
-        },
-        {
-          "word": "ELISA",
-          "length": 5
-        },
-        {
-          "word": "CD4COUNT",
-          "length": 8
-        }
-      ],
-      "counts": {
-        "anchors": 10,
-        "paired": 2,
-        "unpaired": 8
-      }
-    },
-    "aiPartners": [
-      {
-        "original": "KNOW",
-        "suggestion": "TEST"
-      },
-      {
-        "original": "YOUR",
-        "suggestion": "CURE"
-      },
-      {
-        "original": "ELISA",
-        "suggestion": "VIRUS"
-      },
-      {
-        "original": "STATUS",
-        "suggestion": "IMMUNE"
-      },
-      {
-        "original": "CD4COUNT",
-        "suggestion": "OUTREACH"
-      },
-      {
-        "original": "VIRALLOAD",
-        "suggestion": "ANTIVIRAL"
-      },
-      {
-        "original": "ANTIBODIES",
-        "suggestion": "ANTISEPTIC"
-      },
-      {
-        "original": "PROPHYLAXIS",
-        "suggestion": "VACCINATION"
-      }
-    ],
-    "final": {
-      "pairsFinal": [
-        [
-          "TRUVADA",
-          "DESCOVY"
-        ],
-        [
-          "KNOW",
-          "TEST"
-        ],
-        [
-          "YOUR",
-          "CURE"
-        ],
-        [
-          "STATUS",
-          "IMMUNE"
-        ],
-        [
-          "ANTIBODIES",
-          "ANTISEPTIC"
-        ],
-        [
-          "PROPHYLAXIS",
-          "VACCINATION"
-        ],
-        [
-          "VIRALLOAD",
-          "ANTIVIRAL"
-        ],
-        [
-          "ELISA",
-          "VIRUS"
-        ],
-        [
-          "CD4COUNT",
-          "OUTREACH"
-        ]
-      ],
-      "finalWordList": [
-        "TRUVADA",
-        "DESCOVY",
-        "KNOW",
-        "TEST",
-        "YOUR",
-        "CURE",
-        "STATUS",
-        "IMMUNE",
-        "ANTIBODIES",
-        "ANTISEPTIC",
-        "PROPHYLAXIS",
-        "VACCINATION",
-        "VIRALLOAD",
-        "ANTIVIRAL",
-        "ELISA",
-        "VIRUS",
-        "CD4COUNT",
-        "OUTREACH"
-      ]
+    "perLength": 30,
+    "summary": {
+      "3": 50,
+      "4": 50,
+      "5": 50,
+      "6": 50,
+      "7": 50,
+      "8": 50,
+      "9": 50,
+      "10": 50,
+      "11": 50,
+      "12": 50
     }
   }
 }

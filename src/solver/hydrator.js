@@ -1,5 +1,5 @@
 // src/solver/hydrator.js
-import { fetchOneLookByPattern } from "./providers/onelook.js";
+import { fetchOneLookByPattern } from "./onelook.js";
 
 export class OneLookHydrator {
   constructor({

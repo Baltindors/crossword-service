@@ -9,9 +9,9 @@ export const puzzleConfig = {
 
   // the theme of the puzzle, used to generate the puzzle and hidden words
   theme: {
-    phrase: "KNOW YOUR STATUS",
+    phrase: "CARE FOR OTHERS",
     instructions:
-      "Weave the hidden motif 'KNOW YOUR STATUS' into three spans each span should appear as part of a longer entry",
+      "Weave the hidden motif 'CARE FOR OTHERS' into three spans each span should appear as part of a longer entry",
   },
 
   //words that must be included in the puzzle
