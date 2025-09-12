@@ -5,24 +5,24 @@ import { RULES, normalizeToken } from "../config/rules.js";
  * Shape expectations
  * ------------------
  * pools can be either of:
- *  A) tiered (what we suggested writing to pools.json):
- *     {
- *       "5": { medical: ["VIRUS","SERUM",...], general: ["LOCAL","CHECK",...] },
- *       "7": { medical: [...], general: [...] },
- *       ...
- *     }
- *  B) flat (earlier version):
- *     { "5": ["VIRUS","SERUM",...], "7": [...], ... }
+ * A) tiered (what we suggested writing to pools.json):
+ * {
+ * "5": { medical: ["VIRUS","SERUM",...], general: ["LOCAL","CHECK",...] },
+ * "7": { medical: [...], general: [...] },
+ * ...
+ * }
+ * B) flat (earlier version):
+ * { "5": ["VIRUS","SERUM",...], "7": [...], ... }
  *
  * We normalize either shape into three maps:
- *  - byLen.medical : Map<number, string[]>
- *  - byLen.general : Map<number, string[]>
- *  - byLen.both    : Map<number, string[]>  (union, deduped, sorted)
+ * - byLen.medical : Map<number, string[]>
+ * - byLen.general : Map<number, string[]>
+ * - byLen.both    : Map<number, string[]>  (union, deduped, sorted)
  *
  * And a position index per tier:
- *  - posIndex.medical.get(L) -> Array<Map<char, Set<word>>> length L
- *  - posIndex.general.get(L) -> ...
- *  - posIndex.both.get(L)    -> ...
+ * - posIndex.medical.get(L) -> Array<Map<char, Set<word>>> length L
+ * - posIndex.general.get(L) -> ...
+ * - posIndex.both.get(L)    -> ...
  */
 
 // ---------- Build indexes ----------
@@ -173,9 +173,9 @@ function logCoverageByLength({ label, map }) {
  * @param {number} length     slot length
  * @param {string} pattern    e.g., "__A_E__" using RULES.unknownChar for wildcards
  * @param {object} opts
- *   - tier: "medical" | "general" | "both" (default "medical")
- *   - limit: number (cap results; default Infinity)
- *   - order: "alpha" | "asIs" (default "alpha") // alpha is deterministic
+ * - tier: "medical" | "general" | "both" (default "medical")
+ * - limit: number (cap results; default Infinity)
+ * - order: "alpha" | "asIs" (default "alpha") // alpha is deterministic
  * @returns {string[]} candidates
  */
 export function candidatesForPattern(indexes, length, pattern, opts = {}) {

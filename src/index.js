@@ -1,142 +1,137 @@
 // src/index.js
-import "dotenv/config"; // load env FIRST
+import "dotenv/config";
 import fs from "fs/promises";
 import OpenAI from "openai";
 
 import { GRID_MAX_LETTERS } from "./utils/constants.js";
 import { puzzleConfig } from "./config/puzzleConfig.js";
-import { buildCandidatePools } from "./utils/dictionary.js"; // returns Map<length, string[]>
+import { buildCandidatePools } from "./utils/dictionary.js";
 import {
   buildSystemPrompt,
-  buildHiddenWordsPrompt,
+  buildThemeWordsPrompt,
 } from "./ai/promptTemplates.js";
+import { planAndSolve } from "./solver/planner.js";
+import { writeCluesFromGrid } from "./clueing/clueWriter.js";
+import {
+  addWordsToPools,
+  loadPoolsSafe,
+  savePoolsAtomic,
+} from "./utils/poolsStore.js"; // Import pool utilities
 
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-const up = (s) => String(s || "").toUpperCase();
-const upList = (arr) => (arr ?? []).map(up);
-
-// Remove fenced code if model goes rogue
-function stripCodeFences(str) {
-  return str
-    .replace(/^```(?:json)?/i, "")
-    .replace(/```$/i, "")
-    .trim();
+// A structured way to call the OpenAI API and handle JSON parsing
+async function callJSONApi(system, user) {
+  try {
+    const res = await client.chat.completions.create({
+      model: process.env.OPENAI_MODEL || "gpt-4o-mini",
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: user.content },
+      ],
+      temperature: 0.5,
+      response_format: { type: "json_object" },
+    });
+    return JSON.parse(res.choices[0].message.content ?? "{}");
+  } catch (error) {
+    console.error("Error calling OpenAI API:", error);
+    throw new Error("Failed to get a valid JSON response from the AI.");
+  }
 }
 
-async function callJSON(system, user) {
-  const res = await client.chat.completions.create({
-    model: process.env.OPENAI_MODEL || "gpt-4o-mini",
-    messages: [{ role: "system", content: system }, user],
-    temperature: 0,
+// Fetches a list of theme-related words from the AI using user guidance
+async function getThemeWords({ topic, positivePrompt, negativePrompt }) {
+  const system = buildSystemPrompt();
+  const user = buildThemeWordsPrompt({
+    topic,
+    positivePrompt,
+    negativePrompt,
+    wordCount: 30,
+    maxLength: GRID_MAX_LETTERS,
   });
+  const json = await callJSONApi(system, user);
+  return (json.themeWords || []).map((s) => String(s || "").toUpperCase());
+}
 
-  let text = res.choices?.[0]?.message?.content ?? "";
-  text = stripCodeFences(text);
+// The main orchestration function
+async function main() {
+  console.log("🚀 Starting AI-driven crossword generation pipeline...");
 
   try {
-    return JSON.parse(text);
-  } catch {
-    console.error("Invalid JSON from model:\n", text);
-    throw new Error("Invalid JSON");
-  }
-}
+    // Clean up previous run's files
+    await fs.rm("src/data/grid_final.json", { force: true });
+    await fs.rm("src/data/solver_stats.json", { force: true });
+    await fs.rm("src/data/clues.json", { force: true });
 
-async function getHiddenTokens({ topic, phrase }) {
-  const system = buildSystemPrompt();
-  const user = buildHiddenWordsPrompt({
-    topic,
-    themePhrase: phrase,
-    maxLettersPerToken: GRID_MAX_LETTERS,
-    maxTokens: GRID_MAX_LETTERS,
-  });
-  const json = await callJSON(system, user);
-  return upList(json.hiddenWordsOrdered);
-}
+    // 1. Load configuration
+    const { topic, difficulty, positivePrompt, negativePrompt } = puzzleConfig;
+    console.log(`🔹 Topic: ${topic} | Difficulty: ${difficulty}`);
 
-async function main() {
-  console.log("Candidate-pool pipeline starting…");
-  await fs.mkdir("src/data", { recursive: true });
-
-  +(
-    // Reset foundation only; DO NOT delete pools.json (append-only design)
-    (+(await fs
-      .rm("src/data/foundation.json", { force: true })
-      .catch(() => {})))
-  );
-
-  const { topic, difficulty, theme, topicWords } = puzzleConfig;
-
-  // 1) Theme tokens (AI)
-  console.log("🔹 Fetching theme tokens…");
-  const hiddenTokens = await getHiddenTokens({ topic, phrase: theme.phrase });
-  console.log("   → hiddenTokens:", hiddenTokens);
-
-  // 2) Build pools for ALL slot lengths we might see in a 12×12: 3..GRID_MAX_LETTERS
-  const allLengths = Array.from(
-    { length: GRID_MAX_LETTERS - 3 + 1 },
-    (_, i) => i + 3
-  );
-  console.log(
-    `🔹 Building candidate pools for lengths: ${allLengths.join(", ")}`
-  );
-
-  // 3) Build OneLook candidate pools (up to 30 per length)
-  const poolsMap = await buildCandidatePools({
-    topic,
-    lengths: allLengths,
-    perLength: 50, // tweak as needed
-  });
-
-  // Ensure determinism: dedupe + sort alpha
-  for (const [L, arr] of poolsMap.entries()) {
-    poolsMap.set(L, [...new Set(arr.map(up))].sort());
-  }
-
-  // 4) Serialize pools to a plain object for saving
-  const poolsObj = Object.fromEntries(
-    [...poolsMap.entries()]
-      .sort(([a], [b]) => Number(a) - Number(b))
-      .map(([L, arr]) => [String(L), arr])
-  );
-
-  // 5) Build foundation artifact (solver-friendly, no pre-pairing)
-  const foundation = {
-    meta: {
+    // 2. AI Brainstorming
+    console.log("🔹 Step 1: Brainstorming theme words with AI...");
+    const themeWords = await getThemeWords({
       topic,
+      positivePrompt,
+      negativePrompt,
+    });
+    if (themeWords.length === 0) {
+      throw new Error("AI failed to generate any theme words.");
+    }
+    console.log(`   → Success: Generated ${themeWords.length} theme words.`);
+    await fs.writeFile(
+      "src/data/ai_theme_words.json",
+      JSON.stringify({ themeWords }, null, 2)
+    );
+
+    // 3. Add AI-generated words to the main word pool
+    console.log("🔹 Step 2: Adding AI words to the dictionary...");
+    const pools = await loadPoolsSafe();
+    const added = addWordsToPools(pools, themeWords);
+    await savePoolsAtomic(pools);
+    console.log(
+      `   → Success: Added ${
+        Object.keys(added).length > 0
+          ? Object.values(added).reduce((a, b) => a + b)
+          : 0
+      } new words.`
+    );
+
+    // 4. Build and hydrate the general word pools
+    const allLengths = Array.from(
+      { length: GRID_MAX_LETTERS - 2 },
+      (_, i) => i + 3
+    );
+    console.log("🔹 Step 3: Building and hydrating word pools...");
+    await buildCandidatePools({ topic, lengths: allLengths, perLength: 50 });
+    console.log("   → Success: Word pools are ready.");
+
+    // 5. Run the solver
+    console.log(
+      "🔹 Step 4: Solving the puzzle grid (this may take up to a minute)..."
+    );
+    const solveResult = await planAndSolve({
+      size: 12,
       difficulty,
-      gridMaxLetters: GRID_MAX_LETTERS,
-      createdAt: new Date().toISOString(),
-    },
-    theme: {
-      phrase: theme.phrase,
-      instructions: theme.instructions,
-      hiddenTokens,
-    },
-    topic: { words: upList(topicWords) },
-    candidates: {
-      mode: "byLength-onelook",
-      lengths: allLengths,
-      perLength: 30,
-      summary: Object.fromEntries(
-        Object.entries(poolsObj).map(([L, arr]) => [L, arr.length])
-      ),
-    },
-  };
+      logs: true,
+      themeWords,
+    });
 
-  +(
-    // 6) Save artifacts (pools are persisted by dictionary.js; we only write foundation)
-    (await fs.writeFile(
-      "src/data/foundation.json",
-      JSON.stringify(foundation, null, 2)
-    ))
-  );
+    if (!solveResult.ok) {
+      console.error("   → Solver failed. See solver_stats.json for details.");
+      throw new Error(`Solver failed: ${solveResult.reason}`);
+    }
+    console.log("   → Success: Puzzle grid solved!");
 
-  console.log("📄 foundation.json and pools.json written to src/data/");
-  console.log("🏁 Done.");
+    // 6. Generate clues
+    console.log("🔹 Step 5: Generating clues for the final grid...");
+    await writeCluesFromGrid({ topic, difficulty });
+    console.log("   → Success: Clues generated and saved.");
+
+    console.log("\n✅ Crossword generation pipeline completed successfully!");
+  } catch (error) {
+    console.error("\n🔥 Pipeline failed:", error.message);
+    process.exit(1);
+  }
 }
 
-main().catch((err) => {
-  console.error("🔥 Pipeline failed:", err);
-  process.exit(1);
-});
+main();
