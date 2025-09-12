@@ -2,148 +2,86 @@
 import fs from "fs/promises";
 import { getDifficultyConfig } from "../config/difficulty.js";
 import { buildTieredIndexes } from "../dictionary/indexes.js";
-import {
-  generateInitialLayout,
-  addRescueBlockPair,
-} from "./layoutGenerator.js";
+import { generateInitialLayout } from "./layoutGenerator.js";
 import { solveWithBacktracking } from "./backtracker.js";
-import { toStrings, computeSlots } from "../grid/gridModel.js";
-import { RULES } from "../config/rules.js";
+import { makeEmptyGrid, toStrings } from "../grid/gridModel.js";
 
 const DATA_DIR = "src/data";
 const POOLS_PATH = `${DATA_DIR}/pools.json`;
 const GRID_OUT = `${DATA_DIR}/grid_final.json`;
 const STATS_OUT = `${DATA_DIR}/solver_stats.json`;
 
+// A helper to place a word in the grid
+function placeWord(grid, word, r, c, dir) {
+  for (let i = 0; i < word.length; i++) {
+    const letter = word[i];
+    if (dir === "across") {
+      grid[r][c + i] = letter;
+    } else {
+      grid[r + i][c] = letter;
+    }
+  }
+}
+
 /**
- * Plan and solve a crossword using pools + difficulty knobs.
- *
- * @param {object} opts
- *  - size?: number (default 12)
- *  - difficulty?: 1..7
- *  - logs?: boolean
- *  - allowRescue?: boolean (override difficulty.allowRescueBlocks)
- * @returns result from solveWithBacktracking (with optional retries)
+ * An intelligent planner that places theme words first,
+ * then generates a layout, and finally solves the puzzle.
  */
 export async function planAndSolve({
   size = 12,
-  difficulty = 5,
+  difficulty = 3,
   logs = true,
-  allowRescue,
+  themeWords = [], // Expects the AI-generated list
 } = {}) {
   await fs.mkdir(DATA_DIR, { recursive: true });
 
-  // 1) Load candidate pools (tiered or flat shape)
-  const pools = await loadPools(POOLS_PATH);
-
-  // 2) Build indexes (byLen + positional)
+  const pools = JSON.parse(await fs.readFile(POOLS_PATH, "utf8"));
   const indexes = buildTieredIndexes(pools, { logs });
-
-  // 3) Difficulty knobs
   const cfg = getDifficultyConfig(difficulty);
-  const canRescue =
-    typeof allowRescue === "boolean" ? allowRescue : cfg.allowRescueBlocks;
-  const maxRescues = cfg.maxRescuePairs ?? 0;
 
-  // 4) Generate an initial symmetric layout (no theme placement yet)
-  const { grid } = generateInitialLayout({
+  // 1. Select and place the best "anchor" words from the AI-generated list
+  const grid = makeEmptyGrid(size);
+  const anchors = themeWords
+    .filter((w) => w.length <= size)
+    .sort((a, b) => b.length - a.length);
+
+  // A simple but effective placement strategy for the anchor words
+  if (anchors.length > 0) placeWord(grid, anchors[0], 5, 0, "across");
+  if (anchors.length > 1) placeWord(grid, anchors[1], 3, 3, "across");
+  if (anchors.length > 2) placeWord(grid, anchors[2], 7, 5, "across");
+
+  const usedWords = new Set(anchors.slice(0, 3));
+
+  // 2. Generate a layout *around* the placed theme words
+  const { grid: layoutGrid } = generateInitialLayout({
     size,
     blockBudget: cfg.blockBudget,
-    reserved: new Set(), // add "r,c" if you pre-place theme letters later
     logs,
+    grid, // Pass the grid with theme words to the layout generator
   });
 
-  // --- DEBUG: layout snapshot before solving ---
-  if (logs) {
-    const slots = computeSlots(grid);
-    const blockCount = grid
-      .flat()
-      .filter((ch) => ch === RULES.blockChar).length;
-    console.log("[planner] layout generated", {
-      size,
-      blockBudget: cfg.blockBudget,
-      blocks: blockCount,
-      slots: slots.length,
-    });
-  }
-
-  // 5) Try solve; optionally perform a few rescue attempts
-  let result = await solveWithBacktracking({
-    grid,
+  // 3. Attempt to solve the puzzle
+  const result = await solveWithBacktracking({
+    grid: layoutGrid,
     indexes,
     difficulty,
-    enforceUniqueAnswers: true,
     logs,
+    usedWords, // Pass the already used words to the solver
   });
 
-  if (!result.ok && canRescue && maxRescues > 0) {
-    if (logs)
-      console.log(
-        `[planner] initial attempt failed (${result.reason}). Trying rescue blocks…`
-      );
-
-    for (let i = 0; i < maxRescues; i++) {
-      // Add a symmetric rescue pair
-      const res = addRescueBlockPair(grid, { reserved: new Set() });
-      if (!res.ok) {
-        if (logs)
-          console.log(`[planner] rescue #${i + 1} failed: ${res.reason}`);
-        break;
-      }
-
-      if (logs) {
-        console.log(
-          `[planner] added rescue pair at r=${res.pos.r}, c=${res.pos.c}`
-        );
-        // Recompute slot topology for visibility (solver recomputes internally per call)
-        const slotsNow = computeSlots(grid).length;
-        const blocksNow = grid.flat().filter((c) => c.block).length;
-        console.log("[planner] after rescue", {
-          attempt: i + 1,
-          slots: slotsNow,
-          blocks: blocksNow,
-        });
-      }
-
-      // Retry solving on the mutated grid
-      result = await solveWithBacktracking({
-        grid,
-        indexes,
-        difficulty,
-        enforceUniqueAnswers: true,
-        logs,
-      });
-
-      if (result.ok) break;
-    }
-  }
-
-  // 6) Persist artifacts
-  await writeArtifacts({ result, grid });
+  // 4. Persist the results
+  await writeArtifacts({ result, grid: layoutGrid });
 
   return result;
 }
 
-// ---------------- internal helpers ----------------
-
-async function loadPools(path) {
-  try {
-    const raw = await fs.readFile(path, "utf8");
-    return JSON.parse(raw);
-  } catch (err) {
-    throw new Error(
-      `Could not read pools at ${path}. Run your prepare step first. ${err.message}`
-    );
-  }
-}
-
+// Helper to write the final grid and stats to disk
 async function writeArtifacts({ result, grid }) {
   try {
-    // grid_final.json
     const gridDoc = {
       ok: result.ok,
       size: grid.length,
-      grid: toStrings(grid), // array of N strings for easy viewing
+      grid: toStrings(grid),
       assignments: result.ok
         ? Array.from(result.assignments.entries()).map(([slotId, word]) => ({
             slotId,
@@ -154,18 +92,16 @@ async function writeArtifacts({ result, grid }) {
     };
     await fs.writeFile(GRID_OUT, JSON.stringify(gridDoc, null, 2));
 
-    // solver_stats.json
     const statsDoc = {
-      ok: result.ok,
-      reason: result.ok ? undefined : result.reason,
-      details: result.details || null,
-      stats: result.stats || {},
+      ...result,
       writtenAt: new Date().toISOString(),
     };
     await fs.writeFile(STATS_OUT, JSON.stringify(statsDoc, null, 2));
 
-    console.log(`🧩 Wrote ${GRID_OUT} and ${STATS_OUT}`);
+    if (result.ok) {
+      console.log(`🧩 Wrote ${GRID_OUT} and ${STATS_OUT}`);
+    }
   } catch (err) {
-    console.warn(`Failed writing artifacts: ${err.message}`);
+    console.warn(`Failed to write artifacts: ${err.message}`);
   }
 }

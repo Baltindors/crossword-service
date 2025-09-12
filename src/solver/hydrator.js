@@ -1,5 +1,10 @@
 // src/solver/hydrator.js
 import { fetchOneLookByPattern } from "./onelook.js";
+import {
+  addWordsToPools,
+  savePoolsAtomic,
+  loadPoolsSafe,
+} from "../utils/poolsStore.js";
 
 export class OneLookHydrator {
   constructor({
@@ -49,6 +54,11 @@ export class OneLookHydrator {
       if (this.logs) console.log(`[onelook] sp=${pattern} len=${slot.length}`);
       try {
         words = await fetchOneLookByPattern(pattern, { max: this.onelookMax });
+        if (words.length > 0) {
+          const pools = await loadPoolsSafe();
+          addWordsToPools(pools, words);
+          await savePoolsAtomic(pools);
+        }
       } catch (e) {
         if (this.logs) console.log("[onelook] error:", e.message);
         words = [];
