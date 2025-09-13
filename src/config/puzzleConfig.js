@@ -1,27 +1,17 @@
 // src/config/puzzleConfig.js
 
 export const puzzleConfig = {
-  // short label for this puzzle batch this will help prioratize words
-  topic: "HIV Prevention",
+  // The main theme for the AI to brainstorm around.
+  topic: "Medical Imaging",
 
-  // difficulty level, 1 (easiest) through 7 (hardest)
-  difficulty: 1,
+  // Further clarification for the AI on what to include.
+  positivePrompt:
+    "Include terms related to X-ray, MRI, and ultrasound procedures, as well as common anatomical terms seen in scans.",
 
-  // the theme of the puzzle, used to generate the puzzle and hidden words
-  theme: {
-    phrase: "CARE FOR OTHERS",
-    instructions:
-      "Weave the hidden motif 'CARE FOR OTHERS' into three spans each span should appear as part of a longer entry",
-  },
+  // Specific guidance on what the AI should avoid.
+  negativePrompt:
+    "Avoid overly technical physics terms, brand names of equipment, and rare or obscure imaging techniques.",
 
-  //words that must be included in the puzzle
-  topicWords: [
-    "ANTIBODIES",
-    "PROPHYLAXIS",
-    "VIRALLOAD",
-    "ELISA",
-    "CD4COUNT",
-    "TRUVADA",
-    "DESCOVY",
-  ],
+  // Difficulty level, 1 (easiest) through 7 (hardest).
+  difficulty: 3,
 };
