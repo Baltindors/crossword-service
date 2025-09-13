@@ -4,28 +4,13 @@ import { getSlotPattern } from "../grid/slots.js";
 import { candidatesForPattern } from "../dictionary/indexes.js";
 
 /**
- * Policy shape (from difficulty config):
- * {
- *   startTier: "medical" | "both" | "general"      // default "medical"
- *   unlockGeneralAt: { slotDomainLt: number }      // e.g., 3
- * }
- */
-
-const DEFAULT_POLICY = {
-  startTier: "medical",
-  unlockGeneralAt: { slotDomainLt: 3 },
-};
-
-/**
- * Initialize domains for all slots.
- * - Respects start tier (medical-first by default).
- * - If a domain is "starved", auto-widens to 'both' and, if still starved, to 'general'.
- * - Excludes words already used (Set).
+ * Initialize domains for all slots using a single word pool.
+ * - For theme slots, the domain is strictly limited to matching theme words.
+ * - For filler slots, it pulls from the unified word index.
  *
  * @returns {
- *   domains: Map<slotId, string[]>,
- *   tierBySlot: Map<slotId, "medical"|"both"|"general">,
- *   starved: string[]   // slotIds that stayed under threshold even after widening
+ * domains: Map<string, string[]>,
+ * starved: string[] // IDs of filler slots that have few initial candidates
  * }
  */
 export function initDomains({
@@ -33,34 +18,44 @@ export function initDomains({
   slots,
   indexes,
   usedWords = new Set(),
-  policy = {},
+  themeSlotIds = [],
+  themeWords = [],
 }) {
-  const pol = { ...DEFAULT_POLICY, ...policy };
   const domains = new Map();
-  const tierBySlot = new Map();
   const starved = [];
+  const STARVE_THRESHOLD = 3;
 
   for (const slot of slots) {
-    const { list, tier, starvedSlot } = computeInitialDomainForSlot({
-      grid,
-      slot,
-      indexes,
-      usedWords,
-      pol,
-    });
+    let list;
+    const isThemeSlot = themeSlotIds.includes(slot.id);
+
+    if (isThemeSlot) {
+      // Theme slots have a special, restricted domain from the theme list.
+      const pattern = getSlotPattern(grid, slot);
+      list = themeWords.filter((w) => {
+        if (w.length !== slot.length) return false;
+        for (let i = 0; i < w.length; i++) {
+          if (pattern[i] !== RULES.unknownChar && pattern[i] !== w[i]) {
+            return false;
+          }
+        }
+        return !usedWords.has(w);
+      });
+    } else {
+      // Filler slots use the main unified pool.
+      list = computeDomain({ grid, slot, indexes, usedWords });
+      if (list.length < STARVE_THRESHOLD) {
+        starved.push(slot.id);
+      }
+    }
     domains.set(slot.id, list);
-    tierBySlot.set(slot.id, tier);
-    if (starvedSlot) starved.push(slot.id);
   }
 
-  return { domains, tierBySlot, starved };
+  return { domains, starved };
 }
 
 /**
- * Recompute domains for a set of slots (e.g., after placing a word).
- * - Reuses each slot's current tier from tierBySlot.
- * - If a slot becomes starved, auto-widen per policy.
- * - Returns { emptied: string[], starved: string[] } for quick backtrack checks.
+ * Recompute domains for a set of affected slots after a word is placed.
  */
 export function recomputeDomainsForSlots({
   grid,
@@ -68,120 +63,40 @@ export function recomputeDomainsForSlots({
   slotsById,
   indexes,
   usedWords = new Set(),
-  policy = {},
   domains,
-  tierBySlot,
 }) {
-  const pol = { ...DEFAULT_POLICY, ...policy };
   const emptied = [];
-  const starved = [];
 
   for (const id of slotIds) {
     const slot = slotsById.get(id);
     if (!slot) continue;
 
-    // Start from the current tier for this slot
-    let tier = tierBySlot.get(id) || pol.startTier;
-    let list = computeDomain({ grid, slot, indexes, tier, usedWords });
-
-    // If starved, widen tiers progressively
-    const threshold =
-      pol?.unlockGeneralAt?.slotDomainLt ??
-      DEFAULT_POLICY.unlockGeneralAt.slotDomainLt;
-    if (list.length < threshold) {
-      const widened = widenTier(tier);
-      if (widened !== tier) {
-        tier = widened;
-        list = computeDomain({ grid, slot, indexes, tier, usedWords });
-      }
-      // If still starved and not yet at 'general', widen once more to 'general'
-      if (list.length < threshold && tier !== "general") {
-        tier = "general";
-        list = computeDomain({ grid, slot, indexes, tier, usedWords });
-      }
-      if (list.length < threshold) starved.push(id);
+    const list = computeDomain({ grid, slot, indexes, usedWords });
+    if (list.length === 0) {
+      emptied.push(id);
     }
-
-    if (list.length === 0) emptied.push(id);
     domains.set(id, list);
-    tierBySlot.set(id, tier);
   }
 
-  return { emptied, starved };
+  return { emptied };
 }
 
 /**
- * Compute domain for a single slot using a given tier.
- * Filters out already-used answers and enforces token regex.
+ * Compute the domain for a single slot from the main pool.
  */
-export function computeDomain({
-  grid,
-  slot,
-  indexes,
-  tier = "medical",
-  usedWords = new Set(),
-  limit = Infinity,
-}) {
-  const pattern = getSlotPattern(grid, slot); // e.g., "__A_E__"
+export function computeDomain({ grid, slot, indexes, usedWords = new Set() }) {
+  const pattern = getSlotPattern(grid, slot);
+  // No tiers, so we can call candidatesForPattern directly.
   const candidates = candidatesForPattern(indexes, slot.length, pattern, {
-    tier,
-    limit,
-    order: "alpha", // keep deterministic
+    order: "alpha",
   });
 
-  // Filter duplicates, used words, and invalid tokens (paranoid guard)
-  const out = [];
-  const seen = new Set();
-  for (const w of candidates) {
-    if (usedWords.has(w)) continue;
-    if (!RULES.tokenRegex.test(w)) continue;
-    if (seen.has(w)) continue;
-    seen.add(w);
-    out.push(w);
-  }
-  return out;
-}
-
-/**
- * Helper used by initDomains: compute domain starting at policy.startTier,
- * and auto-widen if starved.
- */
-function computeInitialDomainForSlot({ grid, slot, indexes, usedWords, pol }) {
-  const threshold =
-    pol?.unlockGeneralAt?.slotDomainLt ??
-    DEFAULT_POLICY.unlockGeneralAt.slotDomainLt;
-  let tier = pol.startTier || "medical";
-  let list = computeDomain({ grid, slot, indexes, tier, usedWords });
-
-  if (list.length < threshold) {
-    // widen to 'both'
-    tier = widenTier(tier);
-    list = computeDomain({ grid, slot, indexes, tier, usedWords });
-  }
-  if (list.length < threshold && tier !== "general") {
-    tier = "general";
-    list = computeDomain({ grid, slot, indexes, tier, usedWords });
-  }
-
-  const starvedSlot = list.length < threshold;
-  return { list, tier, starvedSlot };
-}
-
-/** Tier widening progression */
-function widenTier(tier) {
-  if (tier === "medical") return "both";
-  if (tier === "both") return "general";
-  return "general";
+  // Filter out any words that have already been used in the grid
+  return candidates.filter((w) => !usedWords.has(w));
 }
 
 /**
  * After placing a word into `placedSlot`, recompute domains for its crossing slots.
- * Returns { emptied, starved, affected } where affected is the list of recomputed slot IDs.
- *
- * Usage:
- *  const affected = placedSlot.crosses.map(x => x.otherId);
- *  const { emptied } = recomputeAfterPlacement({ grid, placedSlot, slotsById, ... });
- *  if (emptied.length) -> backtrack
  */
 export function recomputeAfterPlacement({
   grid,
@@ -189,57 +104,35 @@ export function recomputeAfterPlacement({
   slotsById,
   indexes,
   usedWords = new Set(),
-  policy = {},
   domains,
-  tierBySlot,
 }) {
   const affected = (placedSlot.crosses || []).map((cr) => cr.otherId);
-  const res = recomputeDomainsForSlots({
+  const { emptied } = recomputeDomainsForSlots({
     grid,
     slotIds: affected,
     slotsById,
     indexes,
     usedWords,
-    policy,
     domains,
-    tierBySlot,
   });
-  return { ...res, affected };
+  return { emptied, affected };
 }
 
 /**
- * Utility to build a domain snapshot (for backtracking).
- * Returns a plain object { [slotId]: string[] } and { [slotId]: tier }.
+ * Utility to build a domain snapshot for backtracking.
  */
-export function snapshotDomains(domains, tierBySlot) {
+export function snapshotDomains(domains) {
   const d = {};
-  const t = {};
-  for (const [id, arr] of domains.entries()) d[id] = arr.slice();
-  for (const [id, tier] of tierBySlot.entries()) t[id] = tier;
-  return { d, t };
-}
-
-/** Restore domains snapshot (in-place). */
-export function restoreDomainsSnapshot(domains, tierBySlot, snapshot) {
-  domains.clear();
-  tierBySlot.clear();
-  for (const id of Object.keys(snapshot.d))
-    domains.set(id, snapshot.d[id].slice());
-  for (const id of Object.keys(snapshot.t)) tierBySlot.set(id, snapshot.t[id]);
-}
-
-/**
- * Optional: prune a specific word from all domains (e.g., once chosen).
- * Returns the list of slots where it was removed.
- */
-export function removeWordFromAllDomains(domains, word) {
-  const affected = [];
   for (const [id, arr] of domains.entries()) {
-    const next = arr.filter((w) => w !== word);
-    if (next.length !== arr.length) {
-      domains.set(id, next);
-      affected.push(id);
-    }
+    d[id] = [...arr];
   }
-  return affected;
+  return d;
+}
+
+/** Restore a domain snapshot in-place. */
+export function restoreDomainsSnapshot(domains, snapshot) {
+  domains.clear();
+  for (const id in snapshot) {
+    domains.set(id, [...snapshot[id]]);
+  }
 }

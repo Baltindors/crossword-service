@@ -8,78 +8,102 @@ import {
 
 export class OneLookHydrator {
   constructor({
-    onelookMax = 200,
-    hydrateIfBelow = 12,
+    hydrateIfBelow = 5, // Threshold to trigger API call
     usedWords = new Set(),
     logs = false,
   } = {}) {
-    this.onelookMax = onelookMax;
     this.hydrateIfBelow = hydrateIfBelow;
     this.usedWords = usedWords;
     this.logs = logs;
-    this.cache = new Map(); // key: `${len}:${pattern}` -> string[]
-    this.nogood = new Set(); // key: `${slotId}:${pattern}`
+    this.cache = new Map(); // Cache for the current run: pattern -> words[]
   }
 
+  /**
+   * Creates the pattern string (e.g., "A?P??") from a slot's current state in the grid.
+   * @param {string[][]} grid The current grid.
+   * @param {object} slot The slot object.
+   * @returns {string} The pattern string for the API call.
+   */
   patternForSlot(grid, slot) {
     let s = "";
     for (const { r, c } of slot.cells) {
-      const ch = grid[r][c];
-      s += ch && ch !== "_" ? ch.toUpperCase() : "?";
+      const char = grid[r][c];
+      s += char && char !== "_" ? char.toUpperCase() : "?";
     }
     return s;
   }
 
-  shouldHydrate(size) {
-    return size < this.hydrateIfBelow;
+  /**
+   * Checks if a domain is small enough to require fetching more words.
+   * @param {number} domainSize The number of words currently available for a slot.
+   * @returns {boolean}
+   */
+  shouldHydrate(domainSize) {
+    return domainSize < this.hydrateIfBelow;
   }
 
-  markNogood(slot, grid) {
-    const pat = this.patternForSlot(grid, slot);
-    const k = `${slot.id}:${pat}`;
-    if (this.logs) console.log(`[solve][nogood-add] ${k}`);
-    this.nogood.add(k);
-  }
-
-  async hydrateSlot(domains, grid, slot, { force = false } = {}) {
+  /**
+   * Fetches words from OneLook, adds them to the main pools.json,
+   * and updates the current in-memory domain for a slot.
+   * @param {Map<string, string[]>} domains The solver's current domains map.
+   * @param {string[][]} grid The current grid state.
+   * @param {object} slot The slot that needs more words.
+   * @returns {Promise<boolean>} True if new words were successfully added.
+   */
+  async hydrateSlot(domains, grid, slot) {
     const pattern = this.patternForSlot(grid, slot);
     const cacheKey = `${slot.length}:${pattern}`;
-    const deadKey = `${slot.id}:${pattern}`;
-    if (this.nogood.has(deadKey)) return false;
 
-    let words;
-    if (!force && this.cache.has(cacheKey)) {
-      words = this.cache.get(cacheKey);
-    } else {
-      if (this.logs) console.log(`[onelook] sp=${pattern} len=${slot.length}`);
-      try {
-        words = await fetchOneLookByPattern(pattern, { max: this.onelookMax });
-        if (words.length > 0) {
-          const pools = await loadPoolsSafe();
-          addWordsToPools(pools, words);
-          await savePoolsAtomic(pools);
-        }
-      } catch (e) {
-        if (this.logs) console.log("[onelook] error:", e.message);
-        words = [];
-      }
-      words = words.filter(
-        (w) => w.length === slot.length && !this.usedWords.has(w)
-      );
-      this.cache.set(cacheKey, words);
+    if (this.cache.has(cacheKey)) {
+      return false; // Already tried to hydrate this exact pattern in this run
     }
 
-    if (!words || words.length === 0) return false;
+    if (this.logs)
+      console.log(
+        `[Hydrator] Domain for ${slot.id} is small. Fetching pattern: ${pattern}`
+      );
 
-    const cur = domains.get(slot.id) || [];
-    const set = new Set(cur);
-    let added = 0;
-    for (const w of words)
-      if (!set.has(w)) {
-        set.add(w);
-        added++;
+    try {
+      // 1. Fetch new words from the API
+      const newWords = await fetchOneLookByPattern(pattern, { max: 200 });
+      this.cache.set(cacheKey, newWords); // Cache the result for this run
+
+      if (newWords.length === 0) {
+        if (this.logs)
+          console.log(`[Hydrator] OneLook found no new words for ${pattern}.`);
+        return false;
       }
-    if (added) domains.set(slot.id, Array.from(set));
-    return added > 0;
+
+      // 2. Add new words to the persistent pools.json file
+      const pools = await loadPoolsSafe();
+      addWordsToPools(pools, newWords); // This function now handles a flat structure
+      await savePoolsAtomic(pools);
+      if (this.logs)
+        console.log(
+          `[Hydrator] Added ${newWords.length} new words to pools.json.`
+        );
+
+      // 3. Update the current solver's domain with the new words
+      const currentDomain = new Set(domains.get(slot.id) || []);
+      let addedCount = 0;
+      for (const word of newWords) {
+        if (!this.usedWords.has(word) && !currentDomain.has(word)) {
+          currentDomain.add(word);
+          addedCount++;
+        }
+      }
+
+      if (addedCount > 0) {
+        domains.set(slot.id, Array.from(currentDomain).sort());
+        return true;
+      }
+    } catch (e) {
+      console.error(
+        `[Hydrator] Error fetching or processing words for ${pattern}:`,
+        e.message
+      );
+    }
+
+    return false;
   }
 }

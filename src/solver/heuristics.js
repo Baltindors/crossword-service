@@ -3,54 +3,80 @@ import { RULES } from "../config/rules.js";
 import { candidatesForPattern } from "../dictionary/indexes.js";
 
 /**
- * Select the next slot to fill using MRV (Minimum Remaining Values).
- * Tie-breakers (configurable order): crossingsDesc → lenDesc → alphaAsc → rowAscColAsc
+ * Select the next slot to fill using a theme-first, then MRV strategy.
+ * It prioritizes designated theme slots. Once they are all filled, it
+ * uses a clustered MRV approach to solve the rest of the puzzle.
  *
  * @param {Map<string,string[]>} domains
- * @param {Map<string,object>} slotsById  // from buildSlots().byId
+ * @param {Map<string,object>} slotsById
  * @param {object} opts
- *   - tieBreak: array of keys in order; defaults below
- *   - exclude?: Set<slotId>  // optional: already assigned slots to skip
+ * - tieBreak: array of keys for tie-breaking
+ * - exclude: Set<slotId> of already assigned slots
+ * - themeSlotIds: array<string> of slot IDs to prioritize
  * @returns {object|null} slot
  */
 export function selectNextSlot(domains, slotsById, opts = {}) {
   const {
-    tieBreak = ["crossingsDesc", "lenDesc", "alphaAsc", "rowAscColAsc"],
+    tieBreak = ["crossingsDesc", "lenDesc", "alphaAsc"],
     exclude = new Set(),
+    themeSlotIds = [],
   } = opts;
 
+  // --- Theme-First Strategy ---
+  // First, check if there's an unassigned theme slot and select it immediately.
+  for (const themeId of themeSlotIds) {
+    if (!exclude.has(themeId)) {
+      return slotsById.get(themeId);
+    }
+  }
+
+  // --- MRV + Clustered Heuristic (for filler slots) ---
+  // If all theme slots are filled, proceed with the original heuristic.
+  // This part prioritizes slots connected to already-filled words.
+  const frontier = new Set();
+  for (const assignedId of exclude) {
+    const assignedSlot = slotsById.get(assignedId);
+    if (!assignedSlot) continue;
+    for (const cross of assignedSlot.crosses) {
+      if (!exclude.has(cross.otherId)) {
+        frontier.add(cross.otherId);
+      }
+    }
+  }
+
   let best = null;
+  // If the frontier has slots, choose from it; otherwise, choose from all remaining slots.
+  const candidates =
+    frontier.size > 0
+      ? [...frontier]
+      : [...domains.keys()].filter((id) => !exclude.has(id));
 
-  for (const [id, domain] of domains.entries()) {
-    if (exclude.has(id)) continue;
+  for (const id of candidates) {
+    const domain = domains.get(id);
+    // Skip slots that are already part of the theme or have no candidates
+    if (!domain || domain.length === 0 || themeSlotIds.includes(id)) continue;
+
     const slot = slotsById.get(id);
-    if (!slot) continue;
-
-    const size = domain.length;
-    if (size === 0) continue; // unsatisfiable; caller should handle earlier
-
     const cand = {
       id,
-      size,
+      size: domain.length,
       slot,
       crossings: slot.crosses?.length || 0,
       len: slot.length,
-      alphaKey: id, // stable
-      row: slot.row,
-      col: slot.col,
+      alphaKey: id,
     };
 
-    if (!best || better(cand, best, tieBreak)) best = cand;
+    if (!best || better(cand, best, tieBreak)) {
+      best = cand;
+    }
   }
 
   return best?.slot ?? null;
 }
 
-/** Compare two slot candidates under tie-break rules. Smaller domain wins by default. */
+/** Compare two slot candidates under tie-break rules. */
 function better(a, b, tieBreak) {
-  // primary: domain size (MRV) — smaller is better
   if (a.size !== b.size) return a.size < b.size;
-
   for (const key of tieBreak) {
     switch (key) {
       case "crossingsDesc":
@@ -62,34 +88,14 @@ function better(a, b, tieBreak) {
       case "alphaAsc":
         if (a.alphaKey !== b.alphaKey) return a.alphaKey < b.alphaKey;
         break;
-      case "rowAscColAsc":
-        if (a.row !== b.row) return a.row < b.row;
-        if (a.col !== b.col) return a.col < b.col;
-        break;
-      default:
-        break;
     }
   }
-  return false; // keep existing best
+  return false;
 }
 
 /**
  * Order a slot’s candidates using LCV (Least-Constraining Value) scoring.
- * We simulate placing each candidate by "virtually" fixing its letters at crossing positions
- * and counting how many options neighbors would have under their current tier.
- *
- * @param {object} params
- *  - grid: current grid (2D array)
- *  - slot: current slot object
- *  - candidates: string[] (domain for this slot)
- *  - slotsById: Map<slotId, slot>
- *  - indexes: result of buildTieredIndexes()
- *  - tierBySlot: Map<slotId, "medical"|"both"|"general">
- *  - weights?: { medicalTier?: number, poolScore?: number, frequency?: number, obscurityPenalty?: number }
- *  - lcvDepth?: 0|1  // depth 1 = check direct neighbors only (recommended)
- *  - capPerNeighbor?: number // cap neighbor count during scoring to keep it fast (e.g., 50)
- *
- * @returns {string[]} candidates sorted best-first
+ * This function remains the same as it's a candidate-level heuristic, not a slot-selection one.
  */
 export function orderCandidatesLCV({
   grid,
@@ -98,23 +104,14 @@ export function orderCandidatesLCV({
   slotsById,
   indexes,
   tierBySlot,
-  weights = {},
   lcvDepth = 1,
   capPerNeighbor = 50,
 }) {
   if (!Array.isArray(candidates) || candidates.length <= 1 || lcvDepth === 0) {
-    // Deterministic fallbacks: simple alpha
-    return (candidates || []).slice().sort(alpha);
+    return (candidates || []).slice().sort((a, b) => a.localeCompare(b));
   }
 
-  const scored = [];
-  for (const w of candidates) {
-    let score = 0;
-
-    // Soft tier bias (if you later tag words by tier/frequency, plug here)
-    // For now, neutral base; actual LCV dominates.
-
-    // LCV: sum of neighbor domain sizes if we fix this word’s crossing letters
+  const scored = candidates.map((w) => {
     const lcv = lcvNeighborOptions({
       grid,
       slot,
@@ -124,23 +121,13 @@ export function orderCandidatesLCV({
       tierBySlot,
       capPerNeighbor,
     });
+    return { w, score: lcv };
+  });
 
-    // We want LEAST constraining first → higher neighbor options = better
-    score += lcv;
-
-    scored.push({ w, score });
-  }
-
-  // Sort by score desc, then alpha for determinism
-  scored.sort((a, b) => b.score - a.score || alpha(a.w, b.w));
-
+  scored.sort((a, b) => b.score - a.score || a.w.localeCompare(b.w));
   return scored.map((x) => x.w);
 }
 
-/**
- * Estimate how many options neighbors keep if we place `word` in `slot`.
- * Does not modify the grid; uses positional indexes directly.
- */
 function lcvNeighborOptions({
   grid,
   slot,
@@ -150,40 +137,31 @@ function lcvNeighborOptions({
   tierBySlot,
   capPerNeighbor = 50,
 }) {
-  const w = String(word || "");
   let total = 0;
-
-  if (!slot.crosses || slot.crosses.length === 0) return capPerNeighbor; // no neighbors; neutral
+  if (!slot.crosses || slot.crosses.length === 0) return capPerNeighbor;
 
   for (const cr of slot.crosses) {
     const other = slotsById.get(cr.otherId);
     if (!other) continue;
 
-    const tier = tierBySlot.get(other.id) || "medical";
+    // Use 'both' for LCV checks to get a more realistic count of potential conflicts
+    const tier = tierBySlot.get(other.id) === "theme" ? "theme" : "both";
 
-    // Build neighbor pattern as it would look if this word were placed:
-    // copy existing pattern, then fix the crossing position to w[cr.atThis]
     const pattern = buildProjectedNeighborPattern(
       grid,
       other,
       cr.atOther,
-      w[cr.atThis]
+      word[cr.atThis]
     );
-
-    // Count neighbor candidates under current tier
     const count = candidatesForPattern(indexes, other.length, pattern, {
       tier,
-      limit: capPerNeighbor + 1, // +1 so we can clamp without extra calls
-      order: "alpha",
+      limit: capPerNeighbor + 1,
     }).length;
-
     total += Math.min(count, capPerNeighbor);
   }
-
   return total;
 }
 
-/** Build neighbor pattern by "virtually" writing a letter at idx if it’s unknown. */
 function buildProjectedNeighborPattern(
   grid,
   neighborSlot,
@@ -191,13 +169,8 @@ function buildProjectedNeighborPattern(
   letter
 ) {
   const arr = neighborSlot.cells.map(({ r, c }) => grid[r][c]);
-  const ch = String(letter || "").toUpperCase();
   if (arr[idxInNeighbor] === RULES.unknownChar) {
-    arr[idxInNeighbor] = ch;
+    arr[idxInNeighbor] = String(letter || "").toUpperCase();
   }
   return arr.join("");
-}
-
-function alpha(a, b) {
-  return String(a).localeCompare(String(b));
 }

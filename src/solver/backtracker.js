@@ -40,11 +40,12 @@ export async function solveWithBacktracking({
   enforceUniqueAnswers = true,
   usedWords = new Set(),
   logs = false,
+  themeSlotIds = [],
+  themeWords = [],
 }) {
   const cfg = getDifficultyConfig(difficulty);
   const t0 = Date.now();
 
-  // 1. Build the puzzle's slots from the grid layout
   const { slots, byId: slotsById } = buildSlots(grid);
   if (slots.length === 0) {
     return fail(
@@ -55,37 +56,57 @@ export async function solveWithBacktracking({
     );
   }
 
-  // 2. Initialize the domains for each slot
-  const { domains, tierBySlot, starved } = initDomains({
+  // Initialize domains with a flat, non-tiered structure
+  const { domains, starved } = initDomains({
     grid,
     slots,
     indexes,
     usedWords,
-    policy: {
-      startTier: cfg.medicalFirst ? "medical" : "both",
-      unlockGeneralAt: cfg.unlockGeneralAt,
-    },
+    themeSlotIds,
+    themeWords,
   });
 
   if (logs) {
-    console.log(`[Solver] Initialized with ${slots.length} slots.`);
+    console.log(
+      `[Solver] Initialized with ${slots.length} slots. Prioritizing ${themeSlotIds.length} theme slots.`
+    );
     if (starved.length > 0) {
-      console.log(`[Solver] Starved slots at init: ${starved.join(", ")}`);
+      console.log(
+        `[Solver] Starved filler slots at init: ${starved.join(", ")}`
+      );
     }
   }
 
-  // Check for any immediately unsolvable slots
   const empties = [...domains.entries()]
     .filter(([, d]) => d.length === 0)
     .map(([id]) => id);
   if (empties.length > 0) {
-    return fail("unsatisfiable_initial_domains", { empties, starved }, t0, cfg);
+    // Before failing, try one initial hydration pass for empty slots.
+    const hydrator = new OneLookHydrator({
+      hydrateIfBelow: 1,
+      usedWords,
+      logs,
+    });
+    for (const slotId of empties) {
+      await hydrator.hydrateSlot(domains, grid, slotsById.get(slotId));
+    }
+    // Re-check for empties
+    const stillEmpty = [...domains.entries()]
+      .filter(([, d]) => d.length === 0)
+      .map(([id]) => id);
+    if (stillEmpty.length > 0) {
+      return fail(
+        "unsatisfiable_initial_domains",
+        { empties: stillEmpty, starved },
+        t0,
+        cfg
+      );
+    }
   }
 
-  // 3. Set up the backtracking search
   const assignments = new Map();
+  // The hydrator is now a core part of the solver's toolkit.
   const hydrator = new OneLookHydrator({
-    onelookMax: cfg.onelookMax,
     hydrateIfBelow: cfg.hydrateIfBelow,
     usedWords,
     logs,
@@ -99,11 +120,9 @@ export async function solveWithBacktracking({
     starvedAtInit: starved,
   };
 
-  // The recursive core of the solver
   async function solve(depth) {
     stats.maxDepth = Math.max(stats.maxDepth, depth);
 
-    // Check for termination conditions
     if (Date.now() - t0 > cfg.timeoutMs)
       return fail(
         "timeout",
@@ -120,8 +139,6 @@ export async function solveWithBacktracking({
         cfg,
         stats
       );
-
-    // If all slots are filled, we're done!
     if (assignments.size === slots.length) {
       return {
         ok: true,
@@ -131,10 +148,10 @@ export async function solveWithBacktracking({
       };
     }
 
-    // Select the next slot to fill using our heuristics
     const slot = selectNextSlot(domains, slotsById, {
       tieBreak: cfg.tieBreak,
       exclude: new Set(assignments.keys()),
+      themeSlotIds,
     });
 
     if (!slot) {
@@ -147,50 +164,35 @@ export async function solveWithBacktracking({
       );
     }
 
-    // Hydrate the domain if it's too small
+    // --- DYNAMIC HYDRATION LOGIC ---
     const currentDomain = domains.get(slot.id) || [];
     if (hydrator.shouldHydrate(currentDomain.length)) {
       await hydrator.hydrateSlot(domains, grid, slot);
     }
 
-    // Order the candidates to try the most promising ones first
     const candidates = orderCandidatesLCV({
       grid,
       slot,
-      candidates: domains.get(slot.id) || [],
+      candidates: domains.get(slot.id) || [], // Re-get in case it was hydrated
       slotsById,
       indexes,
-      tierBySlot,
-      weights: cfg.weights,
-      lcvDepth: cfg.lcvDepth,
     });
 
     if (cfg.shuffleCandidates) {
       shuffle(candidates);
     }
 
-    if (logs) {
-      console.log(
-        `[Solver] Depth ${depth}: Trying slot ${slot.id} with ${candidates.length} candidates.`
-      );
-    }
-
-    // Try each candidate in the ordered list
     for (const word of candidates) {
       stats.steps++;
+      // Propagation and domain logic are now simpler without tiers
       const attempt = tryPlaceAndPropagate({
         grid,
         slot,
         word,
         domains,
-        tierBySlot,
         slotsById,
         indexes,
         usedWords,
-        policy: {
-          startTier: cfg.medicalFirst ? "medical" : "both",
-          unlockGeneralAt: cfg.unlockGeneralAt,
-        },
         enforceUniqueAnswers,
       });
 
@@ -201,20 +203,22 @@ export async function solveWithBacktracking({
           return result;
         }
         stats.backtracks++;
-        undoPlacement({
-          grid,
-          record: attempt.record,
-          domains,
-          tierBySlot,
-          usedWords,
-        });
+        undoPlacement({ grid, record: attempt.record, domains, usedWords });
         assignments.delete(slot.id);
       }
     }
 
-    // If no candidate worked, backtrack
-    return fail("dead_end", { lastSlot: slot.id }, t0, cfg, stats);
+    return { ok: false };
   }
 
-  return await solve(0);
+  const finalResult = await solve(0);
+  finalResult.stats = { ...stats, durationMs: Date.now() - t0 };
+  if (!finalResult.ok) {
+    finalResult.reason = "dead_end";
+    finalResult.details = {
+      note: `Solver backtracked from all options after filling ${assignments.size} words.`,
+    };
+  }
+
+  return finalResult;
 }
