@@ -1,37 +1,33 @@
 // src/config/difficulty.js
 
 const BASE = {
-  blockBudget: { min: 26, max: 32 },
-  allowRescueBlocks: true,
-  maxRescuePairs: 2,
-  medicalFirst: true,
-  unlockGeneralAt: {
-    slotDomainLt: 3,
-    globalBacktracks: 5000,
-  },
-  timeoutMs: 60000,
-  maxBacktracks: 50000,
-  useMRV: true,
-  // LCV is critical. Use a depth of at least 1 for all levels.
-  lcvDepth: 1,
-  tieBreak: ["crossingsDesc", "lenDesc", "alphaAsc"],
-  shuffleCandidates: true,
-  weights: {
-    medicalTier: 2.0,
-    poolScore: 1.0,
-    frequency: 0.5,
-    obscurityPenalty: -0.5,
-  },
-  onelookMax: 200,
+  // The min/max number of black squares. More blocks = easier puzzle.
+  blockBudget: { min: 28, max: 32 },
+
+  // When a slot's word list is below this, fetch more from OneLook.
   hydrateIfBelow: 12,
-  minMedicalPct: 0.6,
+
+  // How long the solver will run before timing out (in milliseconds).
+  timeoutMs: 60000,
+
+  // The maximum number of times the solver can backtrack.
+  maxBacktracks: 50000,
+
+  // --- HEURISTICS ---
+  // How many steps to "look ahead" when choosing a word. Higher is smarter but slower.
+  lcvDepth: 1,
+
+  // The order of tie-breakers when choosing the next slot to fill.
+  tieBreak: ["crossingsDesc", "lenDesc", "alphaAsc"],
+
+  // Whether to shuffle candidates before scoring them. Adds variety.
+  shuffleCandidates: true,
 };
 
 const LEVELS = {
   1: {
     name: "easy",
     blockBudget: { min: 30, max: 34 },
-    // No lcvDepth override - it will default to 1 from BASE
   },
   2: {
     name: "easy+",
@@ -59,8 +55,6 @@ const LEVELS = {
     name: "expert",
     blockBudget: { min: 24, max: 28 },
     lcvDepth: 2,
-    allowRescueBlocks: false,
-    minMedicalPct: 0.7,
   },
 };
 
