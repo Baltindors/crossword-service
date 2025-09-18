@@ -28,14 +28,16 @@ const LEVELS = {
   1: {
     name: "easy",
     blockBudget: { min: 30, max: 34 },
+    themeSlots: 2,
   },
   2: {
     name: "easy+",
     blockBudget: { min: 30, max: 34 },
+    themeSlots: 2,
   },
   3: {
     name: "medium",
-    blockBudget: { min: 28, max: 32 },
+    blockBudget: { min: 58, max: 82 },
   },
   4: {
     name: "medium+",

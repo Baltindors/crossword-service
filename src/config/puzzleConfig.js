@@ -13,5 +13,5 @@ export const puzzleConfig = {
     "Avoid overly technical physics terms, brand names of equipment, and rare or obscure imaging techniques.",
 
   // Difficulty level, 1 (easiest) through 7 (hardest).
-  difficulty: 3,
+  difficulty: 1,
 };

@@ -1,5 +1,4 @@
 // src/solver/propagate.js
-import { RULES } from "../config/rules.js";
 import { placeWord, undoChanges } from "../grid/slots.js";
 import {
   recomputeAfterPlacement,
@@ -10,34 +9,12 @@ import {
 
 /**
  * Try to place `word` into `slot`, then forward-check (recompute domains for crossings).
- * If anything empties, revert and return { ok:false }.
- *
- * @param {object} params
- *  - grid: char[][]
- *  - slot: slot object (from buildSlots)
- *  - word: string (already uppercase ok; will be uppercased)
- *  - domains: Map<slotId, string[]>
- *  - tierBySlot: Map<slotId, "medical"|"both"|"general">
- *  - slotsById: Map<slotId, slot>
- *  - indexes: tiered indexes (from buildTieredIndexes)
- *  - usedWords: Set<string>  // answers placed so far
- *  - policy?: object         // same shape used in domains.js (unlock thresholds)
- *  - enforceUniqueAnswers?: boolean (default true) — remove `word` from all other domains
+ * If any crossing slot's domain becomes empty, revert and return { ok:false }.
  *
  * @returns {
- *   ok: boolean,
- *   record?: PlacementRecord,
- *   reason?: string,
- *   details?: any,
- * }
- *
- * PlacementRecord = {
- *   slotId: string,
- *   word: string,
- *   gridChanges: Array<{r,c,prev,now}>,
- *   domainsSnapshot: { d: {[id]:string[]}, t: {[id]:string} },
- *   removedByUniq: string[],
- *   affectedSlots: string[],
+ * ok: boolean,
+ * record?: PlacementRecord, // A record used for undoing the placement
+ * reason?: string,
  * }
  */
 export function tryPlaceAndPropagate({
@@ -45,87 +22,81 @@ export function tryPlaceAndPropagate({
   slot,
   word,
   domains,
-  tierBySlot,
   slotsById,
   indexes,
   usedWords = new Set(),
-  policy = {},
   enforceUniqueAnswers = true,
 }) {
   const W = String(word || "").toUpperCase();
 
-  // Snapshot domains/tiers BEFORE any mutation
-  const domainsSnapshot = snapshotDomains(domains, tierBySlot);
+  // Snapshot domains BEFORE any mutation.
+  const domainsSnapshot = snapshotDomains(domains);
 
-  // 1) Place the word into grid cells (validates token chars & no-2-letter invariant)
+  // 1) Place the word into grid cells.
   const { ok, changes } = placeWord(grid, slot, W);
   if (!ok) {
     return { ok: false, reason: "placeWordFailed" };
   }
 
-  // 2) Update usedWords + (optionally) remove word from all other domains to enforce uniqueness
+  // 2) Update usedWords and enforce uniqueness if required.
   usedWords.add(W);
-  let removedByUniq = [];
   if (enforceUniqueAnswers) {
-    removedByUniq = removeWordFromAllDomains(domains, W);
+    removeWordFromAllDomains(domains, W);
   }
 
-  // 3) Recompute domains for crossing neighbors (forward-check)
-  const { emptied, starved, affected } = recomputeAfterPlacement({
+  // 3) Recompute domains for crossing neighbors (forward-check).
+  const { emptied, affected } = recomputeAfterPlacement({
     grid,
     placedSlot: slot,
     slotsById,
     indexes,
     usedWords,
-    policy,
     domains,
-    tierBySlot,
   });
 
   if (emptied.length > 0) {
-    // revert everything
+    // A crossing slot's domain was wiped out. This is a dead end.
+    // Revert everything and report failure.
     undoChanges(grid, changes);
-    restoreDomainsSnapshot(domains, tierBySlot, domainsSnapshot);
+    restoreDomainsSnapshot(domains, domainsSnapshot);
     usedWords.delete(W);
     return {
       ok: false,
       reason: "forwardCheckEmptied",
-      details: { emptied, starved, affected },
+      details: { emptied },
     };
   }
 
-  // success
+  // Success! Return a record of the changes so we can undo them later if needed.
   const record = {
     slotId: slot.id,
     word: W,
     gridChanges: changes,
     domainsSnapshot,
-    removedByUniq,
     affectedSlots: affected,
   };
 
-  return { ok: true, record, details: { starved, affected } };
+  return { ok: true, record };
 }
 
 /**
  * Undo a placement performed by tryPlaceAndPropagate().
- * Restores grid letters, domains/tiers, and usedWords.
+ * Restores grid letters, domains, and the usedWords set.
  */
 export function undoPlacement({
   grid,
   record,
   domains,
-  tierBySlot,
   usedWords = new Set(),
 }) {
   if (!record) return;
 
-  // 1) Restore grid cells
+  // 1) Restore grid cells to their previous state.
   undoChanges(grid, record.gridChanges);
 
-  // 2) Restore domains & tiers
-  restoreDomainsSnapshot(domains, tierBySlot, record.domainsSnapshot);
+  // 2) Restore the domains from the snapshot.
+  restoreDomainsSnapshot(domains, record.domainsSnapshot);
 
-  // 3) Restore usedWords
+  // 3) Remove the word from the set of used words.
   usedWords.delete(record.word);
 }

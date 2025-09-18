@@ -10,7 +10,7 @@ import {
 
 async function readWordsFromFile(p) {
   const raw = await fs.readFile(p, "utf8");
-  // accept one-per-line; also tolerate commas/semicolons
+  // Accept one-per-line and also tolerate commas/semicolons
   return raw
     .split(/[\r\n,;]+/)
     .map((s) => s.trim())
@@ -21,37 +21,45 @@ async function main() {
   const args = process.argv.slice(2);
   if (args.length === 0) {
     console.error(
-      "Usage: node src/tools/pools-add-file.js <file1.txt> [file2.txt ...]"
+      "Usage: node src/tools/pools-add-file.js <file1.txt> [file2.txt ...]\n" +
+        "Example: node src/tools/pools-add-file.js src/data/my-word-list.txt"
     );
     process.exit(1);
   }
 
   const pools = await loadPoolsSafe();
-
   let total = 0;
   const perLen = {};
 
   for (const filePath of args) {
-    const words = await readWordsFromFile(filePath);
-    const added = addWordsToPools(pools, words);
-    const count = Object.values(added).reduce((a, b) => a + b, 0);
-    total += count;
-    for (const [len, c] of Object.entries(added)) {
-      perLen[len] = (perLen[len] || 0) + c;
+    try {
+      console.log(`Reading words from ${filePath}...`);
+      const words = await readWordsFromFile(filePath);
+      const added = addWordsToPools(pools, words);
+
+      const count = Object.values(added).reduce((a, b) => a + b, 0);
+      total += count;
+
+      for (const [len, c] of Object.entries(added)) {
+        perLen[len] = (perLen[len] || 0) + c;
+      }
+      console.log(`+ Added ${count} new words from ${filePath}`);
+    } catch (error) {
+      console.error(`\nError processing file ${filePath}: ${error.message}`);
     }
-    console.log(`+ ${count} from ${filePath}`);
   }
 
   await savePoolsAtomic(pools);
 
-  console.log(`✅ Updated ${POOLS_PATH}`);
+  console.log(`\n✅ Updated ${POOLS_PATH}`);
   if (total === 0) {
     console.log(
-      "No new words added (duplicates/invalid lengths were ignored)."
+      "No new words were added (duplicates or invalid words were ignored)."
     );
   } else {
+    console.log(`Total new words added: ${total}`);
     for (const len of Object.keys(perLen).sort((a, b) => a - b)) {
-      console.log(`  • length ${len}: +${perLen[len]}`);
+      console.log(`  • Length ${len}: +${perLen[len]}`);
     }
   }
 }

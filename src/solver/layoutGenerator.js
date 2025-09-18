@@ -8,9 +8,8 @@ import {
 import { RULES } from "../config/rules.js";
 
 // A set of high-quality, professionally-used seed patterns for 12x12 grids.
-// These provide a much better starting point than an empty grid.
 const SEED_PATTERNS = [
-  // Pattern 1
+  // Pattern 1 (30 blocks)
   [
     [0, 5],
     [1, 1],
@@ -21,8 +20,14 @@ const SEED_PATTERNS = [
     [4, 4],
     [5, 0],
     [5, 5],
+    [1, 9],
+    [3, 7],
+    [4, 1],
+    [4, 8],
+    [5, 3],
+    [0, 3],
   ],
-  // Pattern 2
+  // Pattern 2 (32 blocks)
   [
     [0, 3],
     [1, 4],
@@ -33,8 +38,15 @@ const SEED_PATTERNS = [
     [4, 2],
     [4, 7],
     [5, 3],
+    [0, 8],
+    [1, 6],
+    [2, 9],
+    [3, 4],
+    [4, 8],
+    [5, 1],
+    [5, 7],
   ],
-  // Pattern 3
+  // Pattern 3 (28 blocks)
   [
     [1, 1],
     [1, 5],
@@ -43,10 +55,17 @@ const SEED_PATTERNS = [
     [4, 4],
     [5, 1],
     [5, 5],
+    [0, 3],
+    [0, 8],
+    [2, 7],
+    [3, 5],
+    [4, 1],
+    [4, 9],
+    [5, 3],
   ],
 ];
 
-// A simple, seeded random number generator for reproducibility
+// A simple, seeded random number generator for reproducibility.
 function makeRNG(seed) {
   if (typeof seed !== "number") return Math.random;
   let t = seed >>> 0;
@@ -64,59 +83,70 @@ function countBlocks(grid) {
 }
 
 /**
- * Generates an initial grid layout.
- * If a grid with pre-placed theme words is provided, it builds around them.
- * Otherwise, it starts with a professional seed pattern.
+ * Generates a valid initial grid layout.
+ * It starts with a professional seed pattern and adds random blocks
+ * until it meets the budget and passes all structural validation.
+ *
+ * @param {object} opts
+ * - size: number (e.g., 12)
+ * - blockBudget: { min: number, max: number }
+ * - logs: boolean
+ * - seed: number (for reproducibility)
+ * @returns {{grid: string[][]}}
  */
 export function generateInitialLayout({
   size = 12,
   blockBudget = { min: 28, max: 32 },
   logs = false,
-  seed = undefined,
-  grid: initialGrid = null, // Optional initial grid with theme words
+  seed = Date.now(),
 } = {}) {
   const rand = makeRNG(seed);
-  const grid = initialGrid ? cloneGrid(initialGrid) : makeEmptyGrid(size);
+  let grid;
+  let attempts = 0;
 
-  // 1. If no initial grid was provided, start with a random seed pattern
-  if (!initialGrid) {
+  // Keep trying until a valid grid is generated or we time out.
+  while (attempts < 100) {
+    attempts++;
+    grid = makeEmptyGrid(size);
+
+    // 1. Start with a random seed pattern.
     const seedPattern =
       SEED_PATTERNS[Math.floor(rand() * SEED_PATTERNS.length)];
     for (const [r, c] of seedPattern) {
       placeBlockSym(grid, r, c, { overwrite: true });
     }
-  }
 
-  // 2. Determine the target number of blocks for this puzzle
-  const targetBlocks = Math.floor(
-    rand() * (blockBudget.max - blockBudget.min + 1) + blockBudget.min
-  );
+    // 2. Determine a random target number of blocks within the budget.
+    const targetBlocks = Math.floor(
+      rand() * (blockBudget.max - blockBudget.min + 1) + blockBudget.min
+    );
 
-  // 3. Add random blocks until the target is reached
-  let attempts = 0;
-  while (countBlocks(grid) < targetBlocks && attempts < 2000) {
-    attempts++;
-    const r = Math.floor(rand() * size);
-    const c = Math.floor(rand() * size);
+    // 3. Add random symmetric blocks until the target is reached.
+    let blockPlacementAttempts = 0;
+    while (countBlocks(grid) < targetBlocks && blockPlacementAttempts < 2000) {
+      blockPlacementAttempts++;
+      const r = Math.floor(rand() * size);
+      const c = Math.floor(rand() * size);
 
-    // placeBlockSym now correctly handles not overwriting existing letters
-    if (placeBlockSym(grid, r, c, { overwrite: false })) {
+      // placeBlockSym returns true if placement was successful and valid.
+      placeBlockSym(grid, r, c, { overwrite: false });
+    }
+
+    // 4. Final validation to ensure the grid is legal. If so, we're done.
+    if (validateGridBasic(grid)) {
       if (logs) {
         console.log(
-          `[Layout] Added block pair at (${r},${c}). Total: ${countBlocks(
+          `[Layout] Generated a valid layout with ${countBlocks(
             grid
-          )}`
+          )} blocks after ${attempts} attempts.`
         );
       }
+      return { grid };
     }
   }
 
-  // 4. Final validation to ensure the grid is legal
-  if (!validateGridBasic(grid)) {
-    // In a more advanced implementation, we could retry with a different seed here.
-    // For now, we'll proceed, but this check is important.
-    console.warn("[Layout] Generated layout failed basic grid validation.");
-  }
-
-  return { grid };
+  // If we exit the loop, it means we failed to generate a valid grid.
+  throw new Error(
+    `[Layout] Failed to generate a valid grid layout after ${attempts} attempts.`
+  );
 }

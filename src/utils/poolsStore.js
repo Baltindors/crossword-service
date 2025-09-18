@@ -27,6 +27,7 @@ export async function loadPoolsSafe() {
   try {
     const raw = await fs.readFile(POOLS_PATH, "utf8");
     const obj = JSON.parse(raw) || {};
+    // Ensure the structure is a flat array for each length
     for (let L = 3; L <= GRID_MAX; L++) {
       const key = String(L);
       const arr = Array.isArray(obj[key]) ? obj[key] : [];
@@ -46,11 +47,15 @@ export async function savePoolsAtomic(poolsObj) {
   await fs.mkdir(DATA_DIR, { recursive: true });
   const tmp = `${POOLS_PATH}.tmp`;
   const bak = `${POOLS_PATH}.bak`;
-  await fs.writeFile(tmp, JSON.stringify(poolsObj, null, 2));
   try {
-    await fs.rename(POOLS_PATH, bak);
-  } catch {}
-  await fs.rename(tmp, POOLS_PATH);
+    await fs.writeFile(tmp, JSON.stringify(poolsObj, null, 2));
+    try {
+      await fs.rename(POOLS_PATH, bak);
+    } catch {} // Ignore error if bak fails (e.g., first run)
+    await fs.rename(tmp, POOLS_PATH);
+  } catch (error) {
+    console.error(`[poolsStore] Failed to save pools file: ${error.message}`);
+  }
 }
 
 export function addWordsToPools(poolsObj, words) {
@@ -60,17 +65,20 @@ export function addWordsToPools(poolsObj, words) {
     if (!OK.test(w)) continue;
     const L = w.length;
     if (L < 3 || L > GRID_MAX) continue;
+
     const key = String(L);
-    poolsObj[key] ||= [];
-    if (!poolsObj[key].includes(w)) {
+    poolsObj[key] = poolsObj[key] || []; // Ensure array exists
+
+    // Use a Set for faster `has` check before pushing
+    const wordSet = new Set(poolsObj[key]);
+    if (!wordSet.has(w)) {
       poolsObj[key].push(w);
       added[key] = (added[key] || 0) + 1;
     }
   }
-  // tidy (dedupe/sort) all buckets
-  for (let L = 3; L <= GRID_MAX; L++) {
-    const key = String(L);
-    poolsObj[key] = dedupeAlpha(poolsObj[key] || []);
+  // Tidy (dedupe/sort) all modified buckets
+  for (const key in added) {
+    poolsObj[key] = dedupeAlpha(poolsObj[key]);
   }
   return added; // e.g., { "3": 12, "4": 7, ... }
 }

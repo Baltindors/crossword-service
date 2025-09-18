@@ -86,12 +86,10 @@ export function recomputeDomainsForSlots({
  */
 export function computeDomain({ grid, slot, indexes, usedWords = new Set() }) {
   const pattern = getSlotPattern(grid, slot);
-  // No tiers, so we can call candidatesForPattern directly.
   const candidates = candidatesForPattern(indexes, slot.length, pattern, {
     order: "alpha",
   });
 
-  // Filter out any words that have already been used in the grid
   return candidates.filter((w) => !usedWords.has(w));
 }
 
@@ -135,4 +133,20 @@ export function restoreDomainsSnapshot(domains, snapshot) {
   for (const id in snapshot) {
     domains.set(id, [...snapshot[id]]);
   }
+}
+
+/**
+ * Optional: prune a specific word from all domains (e.g., once chosen).
+ * Returns the list of slots where it was removed.
+ */
+export function removeWordFromAllDomains(domains, word) {
+  const affected = [];
+  for (const [id, arr] of domains.entries()) {
+    const index = arr.indexOf(word);
+    if (index > -1) {
+      arr.splice(index, 1);
+      affected.push(id);
+    }
+  }
+  return affected;
 }

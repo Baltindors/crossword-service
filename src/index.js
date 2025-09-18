@@ -1,138 +1,137 @@
-// src/dictionary/indexes.js
-import { RULES, normalizeToken } from "../config/rules.js";
+// src/index.js
+import "dotenv/config";
+import fs from "fs/promises";
+import OpenAI from "openai";
 
-/**
- * Build word indexes from a flat pool structure.
- *
- * @param {object} pools - e.g., { "3": ["CAT", "DOG"], "4": [...] }
- * @param {object} [opts]
- * @param {boolean} [opts.logs=false]
- * @returns {{byLen: Map<number, string[]>, posIndex: Map<number, Array<Map<string, Set<string>>>>}}
- */
-export function buildTieredIndexes(pools, { logs = false } = {}) {
-  const byLen = new Map();
+import { GRID_MAX_LETTERS } from "./utils/constants.js";
+import { puzzleConfig } from "./config/puzzleConfig.js";
+import { buildCandidatePools } from "./utils/dictionary.js";
+import {
+  buildSystemPrompt,
+  buildThemeWordsPrompt,
+} from "./ai/promptTemplates.js";
+import { planAndSolve } from "./solver/planner.js";
+import { writeCluesFromGrid } from "./clueing/clueWriter.js";
+import {
+  addWordsToPools,
+  loadPoolsSafe,
+  savePoolsAtomic,
+} from "./utils/poolsStore.js"; // Import pool utilities
 
-  const entries =
-    pools instanceof Map ? [...pools.entries()] : Object.entries(pools);
+const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-  for (const [k, v] of entries) {
-    const L = Number(k);
-    if (!Number.isFinite(L) || !Array.isArray(v)) continue;
-
-    // Normalize, filter for valid tokens, dedupe, and sort
-    const words = [
-      ...new Set(v.map(normalizeToken).filter((w) => RULES.tokenRegex.test(w))),
-    ].sort();
-    if (words.length > 0) {
-      byLen.set(L, words);
-    }
+// A structured way to call the OpenAI API and handle JSON parsing
+async function callJSONApi(system, user) {
+  try {
+    const res = await client.chat.completions.create({
+      model: process.env.OPENAI_MODEL || "gpt-4o-mini",
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: user.content },
+      ],
+      temperature: 0.5,
+      response_format: { type: "json_object" },
+    });
+    return JSON.parse(res.choices[0].message.content ?? "{}");
+  } catch (error) {
+    console.error("Error calling OpenAI API:", error);
+    throw new Error("Failed to get a valid JSON response from the AI.");
   }
-
-  if (logs) {
-    logCoverageByLength({ label: "all words", map: byLen });
-  }
-
-  const posIndex = buildPosIndex(byLen);
-
-  // Maintain the original return shape but without tiers for compatibility
-  return {
-    byLen: { both: byLen },
-    posIndex: { both: posIndex },
-  };
 }
 
-/** Build posIndex for each length: Array< Map<char, Set<word>> > of length L */
-function buildPosIndex(byLenMap) {
-  const pos = new Map();
-  for (const [L, words] of byLenMap.entries()) {
-    const arr = Array.from({ length: L }, () => new Map());
-    for (const w of words) {
-      if (w.length !== L) continue;
-      for (let i = 0; i < L; i++) {
-        const ch = w[i];
-        let bucket = arr[i].get(ch);
-        if (!bucket) {
-          bucket = new Set();
-          arr[i].set(ch, bucket);
-        }
-        bucket.add(w);
-      }
-    }
-    pos.set(L, arr);
-  }
-  return pos;
-}
-
-function logCoverageByLength({ label, map }) {
-  const counts = {};
-  for (const [L, arr] of map.entries()) counts[L] = arr.length;
-  const ordered = Object.fromEntries(
-    Object.entries(counts).sort((a, b) => Number(a[0]) - Number(b[0]))
-  );
-  console.log(`[dict] pool sizes by length (${label}):`, ordered);
-}
-
-// ---------- Query: pattern → candidates ----------
-
-/**
- * Return candidates matching a pattern.
- */
-export function candidatesForPattern(indexes, length, pattern, opts = {}) {
-  const { limit = Infinity, order = "alpha" } = opts;
-
-  // Adjusted to work with the simplified index structure
-  const tier = "both"; // We only have one pool now
-
-  if (typeof pattern !== "string" || pattern.length !== length) return [];
-  if (!indexes?.byLen?.[tier] || !indexes?.posIndex?.[tier]) return [];
-
-  const byLen = indexes.byLen[tier];
-  const posIndex = indexes.posIndex[tier];
-
-  const words = byLen.get(length) || [];
-  if (words.length === 0) return [];
-
-  const pos = posIndex.get(length);
-  if (!pos) return [];
-
-  const constraints = [];
-  for (let i = 0; i < length; i++) {
-    const ch = pattern[i];
-    if (ch !== RULES.unknownChar && ch !== "?") {
-      // Allow both '_' and '?' as wildcards
-      if (!RULES.tokenRegex.test(ch)) return [];
-      constraints.push([i, ch]);
-    }
-  }
-
-  if (constraints.length === 0) {
-    const out = order === "alpha" ? [...words] : words.slice();
-    return out.slice(0, limit);
-  }
-
-  constraints.sort((a, b) => {
-    const sizeA = pos[a[0]].get(a[1])?.size ?? 0;
-    const sizeB = pos[b[0]].get(b[1])?.size ?? 0;
-    return sizeA - sizeB;
+// Fetches a list of theme-related words from the AI using user guidance
+async function getThemeWords({ topic, positivePrompt, negativePrompt }) {
+  const system = buildSystemPrompt();
+  const user = buildThemeWordsPrompt({
+    topic,
+    positivePrompt,
+    negativePrompt,
+    wordCount: 30,
+    maxLength: GRID_MAX_LETTERS,
   });
-
-  let current = null;
-  for (const [i, ch] of constraints) {
-    const bucket = pos[i].get(ch);
-    if (!bucket || bucket.size === 0) return [];
-
-    if (current === null) {
-      current = new Set(bucket);
-    } else {
-      for (const w of current) {
-        if (!bucket.has(w)) current.delete(w);
-      }
-      if (current.size === 0) return [];
-    }
-  }
-
-  let out = [...current];
-  if (order === "alpha") out.sort((a, b) => a.localeCompare(b));
-  if (Number.isFinite(limit)) out = out.slice(0, limit);
-  return out;
+  const json = await callJSONApi(system, user);
+  return (json.themeWords || []).map((s) => String(s || "").toUpperCase());
 }
+
+// The main orchestration function
+async function main() {
+  console.log("🚀 Starting AI-driven crossword generation pipeline...");
+
+  try {
+    // Clean up previous run's files
+    await fs.rm("src/data/grid_final.json", { force: true });
+    await fs.rm("src/data/solver_stats.json", { force: true });
+    await fs.rm("src/data/clues.json", { force: true });
+
+    // 1. Load configuration
+    const { topic, difficulty, positivePrompt, negativePrompt } = puzzleConfig;
+    console.log(`🔹 Topic: ${topic} | Difficulty: ${difficulty}`);
+
+    // 2. AI Brainstorming
+    console.log("🔹 Step 1: Brainstorming theme words with AI...");
+    const themeWords = await getThemeWords({
+      topic,
+      positivePrompt,
+      negativePrompt,
+    });
+    if (themeWords.length === 0) {
+      throw new Error("AI failed to generate any theme words.");
+    }
+    console.log(`   → Success: Generated ${themeWords.length} theme words.`);
+    await fs.writeFile(
+      "src/data/ai_theme_words.json",
+      JSON.stringify({ themeWords }, null, 2)
+    );
+
+    // 3. Add AI-generated words to the main word pool
+    console.log("🔹 Step 2: Adding AI words to the dictionary...");
+    const pools = await loadPoolsSafe();
+    const added = addWordsToPools(pools, themeWords);
+    await savePoolsAtomic(pools);
+    console.log(
+      `   → Success: Added ${
+        Object.keys(added).length > 0
+          ? Object.values(added).reduce((a, b) => a + b)
+          : 0
+      } new words.`
+    );
+
+    // 4. Build and hydrate the general word pools
+    const allLengths = Array.from(
+      { length: GRID_MAX_LETTERS - 2 },
+      (_, i) => i + 3
+    );
+    console.log("🔹 Step 3: Building and hydrating word pools...");
+    await buildCandidatePools({ topic, lengths: allLengths, perLength: 50 });
+    console.log("   → Success: Word pools are ready.");
+
+    // 5. Run the solver
+    console.log(
+      "🔹 Step 4: Solving the puzzle grid (this may take up to a minute)..."
+    );
+    const solveResult = await planAndSolve({
+      size: 12,
+      difficulty,
+      logs: true,
+      themeWords,
+    });
+
+    if (!solveResult.ok) {
+      console.error("   → Solver failed. See solver_stats.json for details.");
+      throw new Error(`Solver failed: ${solveResult.reason}`);
+    }
+    console.log("   → Success: Puzzle grid solved!");
+
+    // 6. Generate clues
+    console.log("🔹 Step 5: Generating clues for the final grid...");
+    await writeCluesFromGrid({ topic, difficulty });
+    console.log("   → Success: Clues generated and saved.");
+
+    console.log("\n✅ Crossword generation pipeline completed successfully!");
+  } catch (error) {
+    console.error("\n🔥 Pipeline failed:", error.message);
+    process.exit(1);
+  }
+}
+
+main();
